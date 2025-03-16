@@ -119,31 +119,10 @@ class AudioTranscriptionApp {
                 } 
             });
 
-            // Check for supported MIME types
-            const mimeTypes = [
-                'audio/webm;codecs=opus',
-                'audio/webm',
-                'audio/ogg;codecs=opus',
-                'audio/ogg',
-                'audio/mp4'
-            ];
-
-            let selectedMimeType = null;
-            for (const mimeType of mimeTypes) {
-                if (MediaRecorder.isTypeSupported(mimeType)) {
-                    selectedMimeType = mimeType;
-                    break;
-                }
-            }
-
-            if (!selectedMimeType) {
-                // If no specific MIME type is supported, let the browser choose the default
-                this.mediaRecorder = new MediaRecorder(this.stream);
-            } else {
-                this.mediaRecorder = new MediaRecorder(this.stream, {
-                    mimeType: selectedMimeType
-                });
-            }
+            // Use default WebM format for recording
+            this.mediaRecorder = new MediaRecorder(this.stream, {
+                mimeType: 'audio/webm;codecs=opus'
+            });
 
             this.audioChunks = [];
 
@@ -155,7 +134,7 @@ class AudioTranscriptionApp {
 
             this.mediaRecorder.onstop = async () => {
                 const audioBlob = new Blob(this.audioChunks, { 
-                    type: this.mediaRecorder.mimeType 
+                    type: 'audio/webm;codecs=opus' 
                 });
                 await this.transcribeAudio(audioBlob);
             };
