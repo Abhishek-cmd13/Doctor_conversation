@@ -125,70 +125,22 @@ class AudioTranscriptionApp {
 
     async startRecording() {
         try {
-            // First check if permissions are already granted
-            const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
-            console.log('Microphone permission status:', permissionStatus.state);
-
-            if (permissionStatus.state === 'denied') {
-                this.showDetailedError(
-                    'Microphone Access Denied',
-                    `Please allow microphone access to use this feature:\n\n` +
-                    `1. Click the camera/microphone icon in your browser's address bar\n` +
-                    `2. Select "Allow" for microphone access\n` +
-                    `3. Refresh the page and try again\n\n` +
-                    `Browser settings guide:\n` +
-                    `• Chrome: Settings > Privacy and security > Site settings > Microphone\n` +
-                    `• Safari: Settings > Websites > Microphone\n` +
-                    `• iOS: Settings > Safari > Microphone`
-                );
-                return;
-            }
-
-            this.stream = await navigator.mediaDevices.getUserMedia({ 
+            const stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
+                    sampleRate: 44100,
                     channelCount: 1,
-                    sampleRate: /iPad|iPhone|iPod/.test(navigator.userAgent) ? 44100 : 16000,
-                    sampleSize: 16,
                     echoCancellation: true,
                     noiseSuppression: true
-                } 
-            }).catch(error => {
-                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-                    throw new Error('Microphone permission was denied. Please allow microphone access and try again.');
-                } else if (error.name === 'NotFoundError') {
-                    throw new Error('No microphone found. Please ensure your microphone is properly connected.');
-                } else {
-                    throw error;
                 }
             });
 
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-            let mimeType = isIOS ? 'audio/mp4' : 'audio/webm;codecs=opus';
-            
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-                const fallbackTypes = [
-                    'audio/webm',
-                    'audio/mp4',
-                    'audio/ogg;codecs=opus',
-                    ''
-                ];
-
-                for (const type of fallbackTypes) {
-                    if (type === '' || MediaRecorder.isTypeSupported(type)) {
-                        mimeType = type;
-                        break;
-                    }
-                }
-            }
-
-            console.log('Using mime type:', mimeType);
-
-            this.mediaRecorder = new MediaRecorder(this.stream, {
-                mimeType: mimeType || undefined,
+            this.mediaRecorder = new MediaRecorder(stream, {
+                mimeType: 'audio/mp4',
                 audioBitsPerSecond: 128000
             });
 
             this.audioChunks = [];
+            this.updateProgress(25, 'Recording');
 
             this.mediaRecorder.ondataavailable = (event) => {
                 if (event.data.size > 0) {
@@ -197,388 +149,117 @@ class AudioTranscriptionApp {
             };
 
             this.mediaRecorder.onstop = async () => {
-                const audioBlob = new Blob(this.audioChunks, { 
-                    type: this.mediaRecorder.mimeType 
-                });
+                const audioBlob = new Blob(this.audioChunks, { type: 'audio/mp4' });
                 await this.transcribeAudio(audioBlob);
             };
 
-            this.mediaRecorder.start(1000);
-            this.isRecording = true;
-            this.updateUIForRecording(true);
-            
-            console.log('Recording started with mime type:', this.mediaRecorder.mimeType);
+            this.mediaRecorder.start();
+            console.log('Recording started with iOS settings');
+
         } catch (error) {
-            console.error('Recording Error:', error);
-            
-            // Show a user-friendly error message with instructions
-            this.showDetailedError(
-                'Microphone Access Required',
-                `${error.message}\n\n` +
-                `To fix this:\n` +
-                `1. Look for the microphone icon in your browser's address bar\n` +
-                `2. Click it and select "Allow"\n` +
-                `3. Refresh the page\n\n` +
-                `If you don't see the icon:\n` +
-                `• Open your browser settings\n` +
-                `• Search for "microphone" or "permissions"\n` +
-                `• Make sure this website is allowed to use the microphone\n\n` +
-                `Technical details:\n` +
-                `Browser: ${navigator.userAgent}`
-            );
+            console.error('Recording Setup Error:', {
+                message: error.message,
+                timestamp: new Date().toISOString(),
+                deviceInfo: this.getDeviceInfo()
+            });
+            this.showError('Microphone access failed. Please check permissions.');
         }
     }
 
     stopRecording() {
-        if (this.mediaRecorder && this.isRecording) {
+        if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
             this.mediaRecorder.stop();
-            this.isRecording = false;
-            this.updateUIForRecording(false);
-            this.stream.getTracks().forEach(track => track.stop());
+            this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
         }
     }
 
     async transcribeAudio(audioBlob) {
         try {
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-            this.updateProgress(50, 'Transcribing', isIOS ? 'Processing iOS audio...' : 'Converting speech to text...');
-
-            if (this.selectedLanguage === 'kn') {
-                await this.transcribeWithSarvam(audioBlob, this.selectedLanguage);
-            } else {
-                await this.transcribeWithDeepgram(audioBlob, this.selectedLanguage);
+            this.updateProgress(50, 'Transcribing');
+            const transcript = await this.transcribeWithDeepgram(audioBlob);
+            
+            if (transcript) {
+                this.updateProgress(75, 'Processing');
+                await this.processWithGemini(transcript);
+                this.updateProgress(100, 'Complete');
+                setTimeout(() => this.hideProgress(), 1000);
             }
-
-            // Verify transcript was generated
-            if (isIOS && !this.verifyTranscript(this.transcriptElement.value)) {
-                throw new Error('Transcript generation failed');
-            }
-
-            this.updateProgress(75, 'Processing', 'Analyzing with AI...');
         } catch (error) {
+            console.error('Transcription Error:', {
+                error: error.message,
+                timestamp: new Date().toISOString(),
+                deviceInfo: this.getDeviceInfo()
+            });
             this.hideProgress();
-            console.error('Transcription Error:', error);
-            this.showError(`Transcription failed: ${error.message}`);
+            this.showError('Transcription failed. Please try again.');
         }
     }
 
-    async transcribeWithDeepgram(audioBlob, language) {
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-        
-        if (isIOS) {
-            console.group('iOS Transcription Session');
-            console.log('Starting iOS transcription with details:', {
-                audioDetails: {
-                    type: audioBlob.type,
-                    size: audioBlob.size,
-                    lastModified: audioBlob.lastModified
-                },
-                ...this.logIOSDetails()
-            });
-        }
-
+    async transcribeWithDeepgram(audioBlob) {
         try {
-            if (isIOS) {
-                const formData = new FormData();
-                formData.append('audio', audioBlob);
-
-                const requestParams = {
-                    model: 'nova-2',
-                    language: language,
-                    encoding: 'linear16',
-                    sample_rate: 44100,
-                    punctuate: true
-                };
-
-                console.log('iOS Deepgram Request Parameters:', {
-                    url: `https://api.deepgram.com/v1/listen?${new URLSearchParams(requestParams)}`,
-                    requestParams,
-                    audioFormat: audioBlob.type,
-                    contentLength: audioBlob.size
-                });
-
-                const response = await fetch(`https://api.deepgram.com/v1/listen?${new URLSearchParams(requestParams)}`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Token ${config.deepgramApiKey}`,
-                        'Content-Type': 'audio/mp4'
-                    },
-                    body: formData
-                });
-
-                console.log('iOS Response Headers:', {
-                    status: response.status,
-                    statusText: response.statusText,
-                    headers: Object.fromEntries([...response.headers.entries()])
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json().catch(e => ({ error: 'Failed to parse error response' }));
-                    console.error('iOS Deepgram Error:', {
-                        status: response.status,
-                        statusText: response.statusText,
-                        errorData,
-                        timestamp: new Date().toISOString()
-                    });
-                    throw new Error(`iOS Deepgram Error: ${response.status} - ${JSON.stringify(errorData)}`);
-                }
-
-                const data = await response.json();
-                console.log('iOS Deepgram Response Structure:', {
-                    hasResults: !!data.results,
-                    hasChannels: !!data.results?.channels,
-                    alternativesCount: data.results?.channels[0]?.alternatives?.length || 0
-                });
-
-                if (!data.results || !data.results.channels || !data.results.channels[0]?.alternatives?.length) {
-                    console.error('Invalid Response Structure:', {
-                        data,
-                        timestamp: new Date().toISOString()
-                    });
-                    throw new Error('Invalid response format from Deepgram');
-                }
-
-                const transcript = data.results.channels[0].alternatives[0].transcript;
-                console.log('iOS Transcript Details:', {
-                    length: transcript.length,
-                    wordCount: transcript.split(' ').length,
-                    hasContent: !!transcript.trim(),
-                    firstFewWords: transcript.slice(0, 50) + '...'
-                });
-
-                if (this.transcriptElement) {
-                    this.transcriptElement.value = transcript;
-                    console.log('Transcript UI Update:', {
-                        elementExists: !!this.transcriptElement,
-                        valueLength: this.transcriptElement.value.length,
-                        timestamp: new Date().toISOString()
-                    });
-                } else {
-                    console.error('Transcript Element Not Found:', {
-                        elementId: 'transcript',
-                        timestamp: new Date().toISOString()
-                    });
-                }
-
-                if (transcript && transcript.trim()) {
-                    console.log('Processing with Gemini...');
-                    await this.processWithGemini(transcript);
-                } else {
-                    throw new Error('Empty transcript generated');
-                }
-
-            } else {
-                // Original non-iOS implementation
-                const formData = new FormData();
-                formData.append('audio', audioBlob);
-
-                const response = await fetch(`https://api.deepgram.com/v1/listen?model=nova-2&language=${language}`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Token ${config.deepgramApiKey}`
-                    },
-                    body: formData
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.message || 'Deepgram transcription failed');
-                }
-
-                const data = await response.json();
-                const transcript = data.results.channels[0].alternatives[0].transcript;
-                this.transcriptElement.value = transcript;
-                await this.processWithGemini(transcript);
-            }
-
-        } catch (error) {
-            console.error('iOS Transcription Error:', {
-                error: {
-                    message: error.message,
-                    stack: error.stack,
-                    name: error.name
-                },
-                context: {
-                    audioDetails: {
-                        type: audioBlob.type,
-                        size: audioBlob.size,
-                        lastModified: audioBlob.lastModified
-                    },
-                    language,
-                    ...this.logIOSDetails()
-                },
+            console.log('Starting Deepgram transcription:', {
+                blobSize: audioBlob.size,
+                blobType: audioBlob.type,
                 timestamp: new Date().toISOString()
             });
 
-            this.showDetailedError(
-                'iOS Transcription Issue',
-                `Error Details:\n${error.message}\n\n` +
-                `Technical Information:\n` +
-                `• Device: iOS (${navigator.platform})\n` +
-                `• Browser: ${navigator.userAgent.split(')')[0]})\n` +
-                `• Audio Type: ${audioBlob.type}\n` +
-                `• Audio Size: ${(audioBlob.size / 1024).toFixed(2)} KB\n` +
-                `• Language: ${language}\n` +
-                `• Timestamp: ${new Date().toLocaleString()}\n\n` +
-                `Troubleshooting Steps:\n` +
-                `1. Check your internet connection\n` +
-                `2. Ensure microphone permissions are granted\n` +
-                `3. Try recording in a quieter environment\n` +
-                `4. Refresh the page and try again\n` +
-                `5. If issues persist, try using a different browser`
-            );
-
-            throw error;
-        } finally {
-            if (isIOS) {
-                console.groupEnd();
-            }
-        }
-    }
-
-    async isWavFormat(blob) {
-        const array = await blob.arrayBuffer();
-        const view = new Uint8Array(array, 0, 12);
-        const header = String.fromCharCode(...view);
-        return header.includes('WAVE');
-    }
-
-    async convertToWav(audioBlob) {
-        try {
-            // Convert Blob to ArrayBuffer
-            const arrayBuffer = await audioBlob.arrayBuffer();
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            
-            // Decode the audio data
-            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-            
-            // Convert to WAV format
-            const wavData = this.audioBufferToWav(audioBuffer);
-            
-            // Create new blob with WAV format
-            return new Blob([wavData], { type: 'audio/wav' });
-        } catch (error) {
-            console.error('Error converting audio:', error);
-            throw error;
-        }
-    }
-
-    audioBufferToWav(buffer) {
-        const numChannels = buffer.numberOfChannels;
-        const sampleRate = buffer.sampleRate;
-        const format = 1; // PCM
-        const bitDepth = 16;
-        
-        const bytesPerSample = bitDepth / 8;
-        const blockAlign = numChannels * bytesPerSample;
-        
-        const dataLength = buffer.length * blockAlign;
-        const bufferLength = 44 + dataLength;
-        
-        const arrayBuffer = new ArrayBuffer(bufferLength);
-        const view = new DataView(arrayBuffer);
-        
-        // WAV header
-        const writeString = (view, offset, string) => {
-            for (let i = 0; i < string.length; i++) {
-                view.setUint8(offset + i, string.charCodeAt(i));
-            }
-        };
-        
-        writeString(view, 0, 'RIFF');
-        view.setUint32(4, 36 + dataLength, true);
-        writeString(view, 8, 'WAVE');
-        writeString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true);
-        view.setUint16(20, format, true);
-        view.setUint16(22, numChannels, true);
-        view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * blockAlign, true);
-        view.setUint16(32, blockAlign, true);
-        view.setUint16(34, bitDepth, true);
-        writeString(view, 36, 'data');
-        view.setUint32(40, dataLength, true);
-        
-        // Write audio data
-        const offset = 44;
-        const channelData = [];
-        for (let i = 0; i < numChannels; i++) {
-            channelData[i] = buffer.getChannelData(i);
-        }
-        
-        let pos = 44;
-        for (let i = 0; i < buffer.length; i++) {
-            for (let channel = 0; channel < numChannels; channel++) {
-                const sample = Math.max(-1, Math.min(1, channelData[channel][i]));
-                const int = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-                view.setInt16(pos, int, true);
-                pos += 2;
-            }
-        }
-        
-        return arrayBuffer;
-    }
-
-    async transcribeWithSarvam(audioBlob, language) {
-        try {
-            console.log('Original audio blob type:', audioBlob.type);
-            
-            // Convert to WAV if not already WAV
-            if (!audioBlob.type.includes('wav')) {
-                console.log('Converting audio to WAV format...');
-                audioBlob = await this.convertToWav(audioBlob);
-                console.log('Converted audio blob type:', audioBlob.type);
-            }
-
             const formData = new FormData();
-            formData.append('file', audioBlob, 'audio.wav');
-            formData.append('model', 'saarika:v1');
-            formData.append('language_code', 'kn-IN');
-            formData.append('with_timestamps', 'false');
+            formData.append('audio', audioBlob);
 
-            console.log('Sending request to Sarvam API...');
-
-            const response = await fetch('https://api.sarvam.ai/speech-to-text', {
+            const response = await fetch('https://api.deepgram.com/v1/listen?' + new URLSearchParams({
+                model: 'nova-2',
+                language: 'en-US',
+                encoding: 'linear16',
+                sample_rate: 44100,
+                punctuate: true
+            }), {
                 method: 'POST',
                 headers: {
-                    'api-subscription-key': config.sarvamApiKey,
+                    'Authorization': `Token ${config.deepgramApiKey}`
                 },
                 body: formData
             });
 
-            console.log('Response status:', response.status); // Debug log
-
             if (!response.ok) {
-                const errorText = await response.text();
-                console.error('Sarvam API Error Response:', errorText); // Debug log
-                throw new Error(`Sarvam API Error: ${response.status} - ${errorText}`);
+                throw new Error(`Deepgram API error: ${response.status}`);
             }
 
             const data = await response.json();
-            console.log('Sarvam API Response:', data); // Debug log
-
-            if (!data || (!data.text && !data.transcript)) {
-                throw new Error('Invalid response format from Sarvam API');
+            
+            if (!data.results?.channels?.[0]?.alternatives?.[0]?.transcript) {
+                throw new Error('No transcript in response');
             }
 
-            // Use data.transcript instead of data.text
-            const transcript = data.transcript || data.text;
-            this.transcriptElement.value = transcript;
+            const transcript = data.results.channels[0].alternatives[0].transcript;
             
-            // Process with Gemini after successful transcription
-            await this.processWithGemini(transcript);
-            
-            return transcript;
+            if (transcript.trim()) {
+                this.transcriptElement.value = transcript;
+                console.log('Transcription successful:', {
+                    length: transcript.length,
+                    preview: transcript.substring(0, 50) + '...'
+                });
+                return transcript;
+            } else {
+                throw new Error('Empty transcript received');
+            }
+
         } catch (error) {
-            console.error('Detailed Sarvam API Error:', error); // Debug log
-            this.showError(`Sarvam Transcription Error: ${error.message}`);
-            throw error;
+            console.error('Deepgram Error:', {
+                error: error.message,
+                stack: error.stack,
+                deviceInfo: this.getDeviceInfo(),
+                audioInfo: {
+                    size: audioBlob.size,
+                    type: audioBlob.type
+                }
+            });
+            throw new Error(`Transcription failed: ${error.message}`);
         }
     }
 
     async processWithGemini(transcript) {
         try {
-            this.updateProgress(75, 'Processing', 'Analyzing with AI...');
+            this.updateProgress(75, 'Processing');
             const prompt = `Extract the medical information stated by the patient and provide ALL responses in English, regardless of the input language.
 
 Transcript to analyze: "${transcript}"
@@ -649,7 +330,7 @@ Important:
             }
             
             // After successful processing and form filling
-            this.updateProgress(100, 'Complete', 'Form filled successfully!');
+            this.updateProgress(100, 'Complete');
             setTimeout(() => {
                 this.hideProgress();
             }, 1000);
@@ -954,6 +635,20 @@ ${this.medicalSummaryElement.value}
                 onLine: navigator.onLine
             },
             timestamp: new Date().toISOString()
+        };
+    }
+
+    // Add this helper method to get device information
+    getDeviceInfo() {
+        return {
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            vendor: navigator.vendor,
+            screen: {
+                width: window.screen.width,
+                height: window.screen.height,
+                ratio: window.devicePixelRatio
+            }
         };
     }
 }
