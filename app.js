@@ -1,20 +1,173 @@
+class AudioTranscriptionApp {
+    constructor() {
+        // Check if configuration exists
+        if (typeof config === 'undefined') {
+            this.showError('Configuration not found. Please ensure config.js is properly set up.');
+            return;
+        }
+
+        // Validate API keys
+        if (!config.isConfigValid()) {
+            this.showError('Missing required API keys. Please check your configuration.');
+            return;
+        }
+
+        this.mediaRecorder = null;
+        this.audioChunks = [];
+        this.isRecording = false;
+        this.stream = null;
+        this.selectedLanguage = 'en'; // Default language
+        this.initializeElements();
+        this.attachEventListeners();
+        
+        // Load cached phone number on startup
+        this.loadCachedPhoneNumber();
+    }
+
+    initializeElements() {
+        this.recordButton = document.getElementById(config.recordButtonId);
+        this.stopButton = document.getElementById(config.stopButtonId);
+        this.submitButton = document.getElementById(config.submitButtonId);
+        this.transcriptElement = document.getElementById(config.transcriptId);
+        this.recordingStatus = document.getElementById(config.recordingStatusId);
+        this.errorMessage = document.getElementById(config.errorMessageId);
+        // Initialize new elements
+        this.patientNameElement = document.getElementById(config.patientNameId);
+        this.symptomsElement = document.getElementById(config.symptomsId);
+        this.medicalHistoryElement = document.getElementById(config.medicalHistoryId);
+        this.medicationsElement = document.getElementById(config.medicationsId);
+        this.medicalSummaryElement = document.getElementById(config.medicalSummaryId);
+        this.timestampElement = document.getElementById(config.timestampId);
+        this.languageButtons = document.querySelectorAll('.language-btn');
+        this.doctorPhoneElement = document.getElementById(config.doctorPhoneId);
+        this.clearPhoneBtn = document.getElementById('clearPhoneBtn');
+        
+        // Set default active button
+        this.languageButtons.forEach(button => {
+            if (button.dataset.language === this.selectedLanguage) {
+                button.classList.add('active');
+            }
+        });
+
+        // Verify critical elements exist
+        if (!this.errorMessage) {
+            console.error('Error message element not found');
+            // Create error message element if it doesn't exist
+            this.errorMessage = document.createElement('div');
+            this.errorMessage.id = config.errorMessageId;
+            this.errorMessage.className = 'alert alert-danger position-fixed bottom-0 end-0 m-3';
+            this.errorMessage.style.display = 'none';
+            document.body.appendChild(this.errorMessage);
+        }
+
+        // Add phone number validation and auto-save
+        if (this.doctorPhoneElement) {
+            this.doctorPhoneElement.addEventListener('input', (e) => {
+                // Remove any non-numeric characters
+                e.target.value = e.target.value.replace(/\D/g, '');
+                
+                // Limit to 10 digits
+                if (e.target.value.length > 10) {
+                    e.target.value = e.target.value.slice(0, 10);
+                }
+
+                // Save to localStorage when a valid number is entered
+                if (e.target.value.length === 10) {
+                    this.savePhoneNumber(e.target.value);
+                }
+            });
+        }
+
+        if (this.clearPhoneBtn) {
+            this.clearPhoneBtn.addEventListener('click', () => {
+                this.clearSavedPhoneNumber();
+            });
+        }
+    }
+
+    attachEventListeners() {
+        this.recordButton.addEventListener('click', () => this.startRecording());
+        this.stopButton.addEventListener('click', () => this.stopRecording());
+        this.submitButton.addEventListener('click', () => this.submitToAirtable());
+        
+        // Add language button event listeners
+        this.languageButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                // Remove active class from all buttons
+                this.languageButtons.forEach(btn => btn.classList.remove('active'));
+                // Add active class to clicked button
+                button.classList.add('active');
+                this.selectedLanguage = button.dataset.language;
+                
+                // Disable recording if in progress
+                if (this.isRecording) {
+                    this.stopRecording();
+                }
+            });
+        });
+    }
+
+    async startRecording() {
+        try {
+            this.stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    channelCount: 1,
+                    sampleRate: 16000,
+                    sampleSize: 16,
+                    echoCancellation: true,
+                    noiseSuppression: true
+                } 
+            });
+
+            // Check for supported MIME types
+            const mimeTypes = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/ogg;codecs=opus',
+                'audio/ogg',
+                'audio/mp4'
+            ];
+
+            let selectedMimeType = null;
+            for (const mimeType of mimeTypes) {
+                if (MediaRecorder.isTypeSupported(mimeType)) {
+                    selectedMimeType = mimeType;
+                    break;
+                }
+            }
+
+            if (!selectedMimeType) {
+                // If no specific MIME type is supported, let the browser choose the default
+                this.mediaRecorder = new MediaRecorder(this.stream);
+            } else {
+                this.mediaRecorder = new MediaRecorder(this.stream, {
+                    mimeType: selectedMimeType
+                });
+            }
+
+            this.audioChunks = [];
+
+            this.mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    this.audioChunks.push(event.data);
+                }
+            };
+
+            this.mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(this.audioChunks, { 
+                    type: this.mediaRecorder.mimeType 
+                });
+                await this.transcribeAudio(audioBlob);
+            };
+
             this.mediaRecorder.start();
             this.isRecording = true;
-
-            // Update UI
-            this.recordButton.textContent = 'Stop Recording';
-            this.recordButton.classList.add('recording');
+            this.updateUIForRecording(true);
             
-            console.log(`Recording started on ${isIOS ? 'iOS' : 'non-iOS'} device`);
-
+            console.log('Recording started with mime type:', this.mediaRecorder.mimeType);
         } catch (error) {
-            console.error('Recording error:', {
-                error: error.message,
-                isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
-                userAgent: navigator.userAgent
-            });
-            alert('Microphone access failed. Please check permissions.');
-            this.resetRecordingState();
+            console.error('Recording Error:', error);
+            this.showError(`Recording failed: ${error.message}`);
         }
     }
 
