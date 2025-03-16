@@ -1,13 +1,13 @@
-// Configuration management
+// Copy this file as config.js and add your API keys
 const config = {
-    // API Keys - Using Vercel's environment variables
-    sarvamApiKey: process.env.SARVAM_API_KEY || '',
-    geminiApiKey: process.env.GEMINI_API_KEY || '',
-    deepgramApiKey: process.env.DEEPGRAM_API_KEY || '',
-    airtableApiKey: process.env.AIRTABLE_API_KEY || '',
-    airtableBaseId: process.env.AIRTABLE_BASE_ID || '',
+    // API Keys
+    sarvamApiKey: 'your_sarvam_api_key',
+    geminiApiKey: 'your_gemini_api_key',
+    deepgramApiKey: 'your_deepgram_api_key',
+    airtableApiKey: 'your_airtable_api_key',
+    airtableBaseId: 'your_airtable_base_id',
 
-    // Element IDs (these don't need to be environment variables)
+    // Element IDs
     recordButtonId: 'recordButton',
     stopButtonId: 'stopButton',
     submitButtonId: 'submitButton',
@@ -21,7 +21,6 @@ const config = {
     medicalSummaryId: 'medicalSummary',
     timestampId: 'timestamp',
 
-    // Validation method
     isConfigValid() {
         return !!(
             this.sarvamApiKey &&
@@ -31,9 +30,4 @@ const config = {
             this.airtableBaseId
         );
     }
-};
-
-// Validate configuration on load
-if (!config.isConfigValid()) {
-    console.error('Missing required API keys. Please check your configuration.');
-} 
+}; 
