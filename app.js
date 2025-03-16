@@ -320,14 +320,18 @@ class AudioTranscriptionApp {
                 body: JSON.stringify({
                     contents: [{
                         parts: [{
-                            text: `Please analyze this medical conversation and extract the following information in a structured format:
-                            1. Patient Name
-                            2. Symptoms
-                            3. Medical History
-                            4. Medications
-                            5. Medical Summary
-                            
-                            Conversation: ${transcript}`
+                            text: `Extract the following information from this medical conversation. Format the response exactly as shown below, using simple bullet points (-) for lists:
+
+Patient Name: [extract patient's name]
+Symptoms:
+- [list key symptoms]
+Medical History:
+- [list relevant medical history]
+Medications:
+- [list current medications]
+Medical Summary: [provide a concise summary]
+
+Conversation: ${transcript}`
                         }]
                     }]
                 })
@@ -460,13 +464,13 @@ class AudioTranscriptionApp {
             // Send WhatsApp message if phone number exists
             const doctorPhone = document.getElementById('doctorPhone').value;
             if (doctorPhone) {
-                // Create a formatted medical report
-                const medicalReport = `*Medical Report for ${fields["Patient Name"]}*\n\n` +
-                    `*Symptoms:*\n${fields["Symptoms"]}\n\n` +
-                    `*Medical History:*\n${fields["Medical History"]}\n\n` +
-                    `*Medications:*\n${fields["Medications"]}\n\n` +
-                    `*Medical Summary:*\n${fields["Medical Summary"]}\n\n` +
-                    `*Generated on:* ${new Date().toLocaleString()}`;
+                // Create a formatted medical report without asterisks
+                const medicalReport = `Medical Report for ${fields["Patient Name"]}\n\n` +
+                    `Symptoms:\n${fields["Symptoms"]}\n\n` +
+                    `Medical History:\n${fields["Medical History"]}\n\n` +
+                    `Medications:\n${fields["Medications"]}\n\n` +
+                    `Medical Summary:\n${fields["Medical Summary"]}\n\n` +
+                    `Generated on: ${new Date().toLocaleString()}`;
                 
                 const encodedMessage = encodeURIComponent(medicalReport);
                 if (this.isSafari) {
