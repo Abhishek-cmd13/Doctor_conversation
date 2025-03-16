@@ -23,13 +23,6 @@ const config = {
     timestampId: 'timestamp',
     doctorPhoneId: 'doctorPhone',
 
-    // Add progress bar IDs
-    progressCardId: 'progressCard',
-    progressBarId: 'progressBar',
-    progressStatusId: 'progressStatus',
-    progressPercentageId: 'progressPercentage',
-    progressStageId: 'progressStage',
-
     // Validation method
     isConfigValid() {
         return !!(
