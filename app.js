@@ -619,53 +619,17 @@ ${this.medicalSummaryElement.value}
 *Timestamp:* ${this.timestampElement.value}
         `;
 
-        // Format phone number for WhatsApp (add country code and remove spaces/special chars)
+        // Format phone number for WhatsApp
         const formattedPhone = `91${phoneNumber.replace(/\D/g, '')}`;
         
-        // Check if iOS
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-        
         // Create WhatsApp URL
-        let whatsappUrl;
-        if (isIOS) {
-            // Use whatsapp:// protocol for iOS
-            whatsappUrl = `whatsapp://send?phone=${formattedPhone}&text=${encodeURIComponent(message)}`;
-        } else {
-            // Use https://wa.me/ for other platforms
-            whatsappUrl = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
-        }
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        const whatsappUrl = isIOS ? 
+            `whatsapp://send?phone=${formattedPhone}&text=${encodeURIComponent(message)}` :
+            `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
         
-        // Try to open WhatsApp
-        try {
-            window.location.href = whatsappUrl;
-            
-            // Set a timeout to check if WhatsApp opened
-            setTimeout(() => {
-                // If still on the same page, show alternative instructions
-                const alternativeMessage = isIOS ? 
-                    'Please make sure WhatsApp is installed on your device.' :
-                    'Please try opening WhatsApp manually and sending the message.';
-                
-                this.showDetailedError(
-                    'Opening WhatsApp',
-                    `If WhatsApp didn't open automatically:\n\n` +
-                    `1. ${alternativeMessage}\n` +
-                    `2. The number to send to is: +91${phoneNumber}\n` +
-                    `3. The message has been copied to your clipboard.`
-                );
-                
-                // Copy message to clipboard as backup
-                navigator.clipboard.writeText(message).catch(console.error);
-            }, 2000);
-        } catch (error) {
-            console.error('Error opening WhatsApp:', error);
-            this.showDetailedError(
-                'WhatsApp Error',
-                `Unable to open WhatsApp automatically.\n\n` +
-                `Please make sure WhatsApp is installed and try again.\n\n` +
-                `Technical Details:\n${error.message}`
-            );
-        }
+        // Simply open WhatsApp without error checking
+        window.location.href = whatsappUrl;
     }
 
     resetForm() {
