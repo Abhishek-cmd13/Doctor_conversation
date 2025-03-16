@@ -403,6 +403,117 @@ class AudioTranscriptionApp {
         this.recordingStatus.style.display = isRecording ? 'block' : 'none';
     }
 
+    async submitToAirtable() {
+        try {
+            // Simple object with just the required fields
+            const fields = {
+                "Doctor Name": "Saurabh",
+                "Patient Name": document.getElementById('patientName').value,
+                "Symptoms": document.getElementById('symptoms').value,
+                "Medical History": document.getElementById('medicalHistory').value,
+                "Medications": document.getElementById('medications').value,
+                "Medical Summary": document.getElementById('medicalSummary').value
+            };
+
+            // Safari-specific fetch options
+            const fetchOptions = {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${config.airtableApiKey}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'Origin': window.location.origin
+                },
+                mode: 'cors',
+                credentials: 'omit',
+                body: JSON.stringify({
+                    records: [{
+                        fields: fields
+                    }]
+                })
+            };
+
+            // Safari-specific fetch handling
+            let response;
+            try {
+                response = await fetch(`https://api.airtable.com/v0/${config.airtableBaseId}/Table%201`, fetchOptions);
+            } catch (fetchError) {
+                console.error('Fetch error:', fetchError);
+                // Try alternative fetch for Safari
+                if (this.isSafari) {
+                    response = await fetch(`https://api.airtable.com/v0/${config.airtableBaseId}/Table%201`, {
+                        ...fetchOptions,
+                        headers: {
+                            ...fetchOptions.headers,
+                            'Access-Control-Allow-Origin': '*'
+                        }
+                    });
+                } else {
+                    throw fetchError;
+                }
+            }
+
+            if (!response.ok) {
+                throw new Error('Failed to submit to Airtable');
+            }
+
+            // Send WhatsApp message if phone number exists
+            const doctorPhone = document.getElementById('doctorPhone').value;
+            if (doctorPhone) {
+                // Create a formatted medical report
+                const medicalReport = `*Medical Report for ${fields["Patient Name"]}*\n\n` +
+                    `*Symptoms:*\n${fields["Symptoms"]}\n\n` +
+                    `*Medical History:*\n${fields["Medical History"]}\n\n` +
+                    `*Medications:*\n${fields["Medications"]}\n\n` +
+                    `*Medical Summary:*\n${fields["Medical Summary"]}\n\n` +
+                    `*Generated on:* ${new Date().toLocaleString()}`;
+                
+                const encodedMessage = encodeURIComponent(medicalReport);
+                if (this.isSafari) {
+                    // Try to open WhatsApp app first
+                    const whatsappUrl = `whatsapp://send?phone=91${doctorPhone}&text=${encodedMessage}`;
+                    const webWhatsappUrl = `https://web.whatsapp.com/send?phone=91${doctorPhone}&text=${encodedMessage}`;
+                    
+                    // Try to open WhatsApp app
+                    window.location.href = whatsappUrl;
+                    
+                    // After a short delay, check if WhatsApp app was opened
+                    setTimeout(() => {
+                        // If still on the same page, open WhatsApp Web
+                        window.location.href = webWhatsappUrl;
+                    }, 1000);
+                } else {
+                    // For non-Safari browsers, use the regular wa.me link
+                    window.open(`https://wa.me/91${doctorPhone}?text=${encodedMessage}`, '_blank');
+                }
+            }
+
+            // Clear form and show success
+            document.getElementById('patientName').value = '';
+            document.getElementById('symptoms').value = '';
+            document.getElementById('medicalHistory').value = '';
+            document.getElementById('medications').value = '';
+            document.getElementById('medicalSummary').value = '';
+            this.transcriptElement.value = '';
+            
+            this.showSuccess('Data submitted successfully and sent to WhatsApp!');
+        } catch (error) {
+            console.error('Submission Error:', error);
+            this.showError(error.message);
+        }
+    }
+
+    showSuccess(message) {
+        const successMessage = document.createElement('div');
+        successMessage.className = 'alert alert-success position-fixed bottom-0 end-0 m-3';
+        successMessage.textContent = message;
+        document.body.appendChild(successMessage);
+        
+        setTimeout(() => {
+            successMessage.remove();
+        }, 5000);
+    }
+
     showError(message) {
         if (this.errorMessage) {
             this.errorMessage.textContent = message;
