@@ -115,50 +115,34 @@ class AudioTranscriptionApp {
 
     async startRecording() {
         try {
-            this.stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
-                    channelCount: 1,
-                    sampleRate: 16000,
-                    sampleSize: 16,
-                    echoCancellation: true,
-                    noiseSuppression: true
-                } 
-            });
-
-            // Check if running on iOS
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
             
-            // Use different mime types based on browser support
-            let mimeType = 'audio/webm;codecs=opus';
-            if (isIOS) {
-                mimeType = 'audio/mp4';
-            }
-
-            // Check if the mime type is supported
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-                // Fallback options in order of preference
-                const options = [
-                    'audio/webm',
-                    'audio/mp4',
-                    'audio/ogg;codecs=opus',
-                    'audio/wav',
-                    ''  // Empty string lets browser choose format
-                ];
-
-                for (const option of options) {
-                    if (option === '' || MediaRecorder.isTypeSupported(option)) {
-                        mimeType = option;
-                        break;
-                    }
+            // Configure audio constraints
+            const audioConstraints = {
+                audio: {
+                    channelCount: 1,
+                    sampleRate: isIOS ? 44100 : 16000, // iOS typically uses 44.1kHz
+                    sampleSize: 16,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
                 }
+            };
+
+            this.stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+
+            // Use a format that works on iOS
+            const options = {
+                mimeType: isIOS ? 'audio/mp4' : 'audio/webm;codecs=opus',
+                audioBitsPerSecond: 128000
+            };
+
+            try {
+                this.mediaRecorder = new MediaRecorder(this.stream, options);
+            } catch (e) {
+                // Fallback if the preferred format isn't supported
+                this.mediaRecorder = new MediaRecorder(this.stream);
             }
-
-            // Create MediaRecorder with supported type
-            this.mediaRecorder = new MediaRecorder(this.stream, {
-                mimeType: mimeType || undefined
-            });
-
-            console.log('Using mime type:', this.mediaRecorder.mimeType);
 
             this.audioChunks = [];
 
@@ -224,32 +208,108 @@ class AudioTranscriptionApp {
 
     async transcribeWithDeepgram(audioBlob, language) {
         try {
-            // Create FormData and append the audio blob
-            const formData = new FormData();
-            formData.append('audio', audioBlob);
+            // Collect debug information
+            const debugInfo = {
+                blobType: audioBlob.type,
+                blobSize: audioBlob.size,
+                isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
+                language: language,
+                timestamp: new Date().toISOString()
+            };
 
-            // Prepare the request with Nova-2 model
-            const response = await fetch(`https://api.deepgram.com/v1/listen?model=nova-2&language=${language}`, {
+            console.log('Debug Info:', debugInfo);
+
+            const isIOS = debugInfo.isIOS;
+            let finalBlob = audioBlob;
+
+            if (isIOS) {
+                try {
+                    // Convert to WAV format for consistency
+                    const arrayBuffer = await audioBlob.arrayBuffer();
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    const wavBlob = await this.audioBufferToWav(audioBuffer);
+                    finalBlob = new Blob([wavBlob], { type: 'audio/wav' });
+                    
+                    debugInfo.conversionSuccess = true;
+                    debugInfo.convertedType = finalBlob.type;
+                    debugInfo.convertedSize = finalBlob.size;
+                } catch (conversionError) {
+                    debugInfo.conversionSuccess = false;
+                    debugInfo.conversionError = conversionError.message;
+                    this.showDetailedError(
+                        'Audio Conversion Error',
+                        JSON.stringify(debugInfo, null, 2)
+                    );
+                    finalBlob = audioBlob;
+                }
+            }
+
+            const formData = new FormData();
+            formData.append('audio', finalBlob);
+
+            const params = new URLSearchParams({
+                model: 'nova-2',
+                language: language,
+                punctuate: true,
+                diarize: false,
+                channels: 1,
+                encoding: isIOS ? 'linear16' : 'opus',
+                sample_rate: isIOS ? 44100 : 16000
+            });
+
+            debugInfo.requestParams = Object.fromEntries(params);
+
+            const response = await fetch(`https://api.deepgram.com/v1/listen?${params.toString()}`, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Token ${config.deepgramApiKey}`
+                    'Authorization': `Token ${config.deepgramApiKey}`,
+                    'Content-Type': isIOS ? 'audio/wav' : audioBlob.type
                 },
                 body: formData
             });
 
+            debugInfo.responseStatus = response.status;
+            debugInfo.responseStatusText = response.statusText;
+
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || 'Deepgram transcription failed');
+                debugInfo.errorResponse = errorData;
+                this.showDetailedError(
+                    'Transcription Failed',
+                    JSON.stringify(debugInfo, null, 2)
+                );
+                throw new Error(errorData.message || `Deepgram error: ${response.status}`);
             }
 
             const data = await response.json();
+            debugInfo.transcriptionSuccess = true;
+
+            if (!data.results || !data.results.channels || !data.results.channels[0].alternatives) {
+                debugInfo.invalidResponse = true;
+                this.showDetailedError(
+                    'Invalid Response Format',
+                    JSON.stringify(debugInfo, null, 2)
+                );
+                throw new Error('Invalid response format from Deepgram');
+            }
+
             const transcript = data.results.channels[0].alternatives[0].transcript;
             this.transcriptElement.value = transcript;
-            
-            // Process with Gemini after successful transcription
             await this.processWithGemini(transcript);
+
         } catch (error) {
             console.error('Deepgram API Error:', error);
+            this.showDetailedError(
+                'Transcription Error',
+                JSON.stringify({
+                    error: error.message,
+                    stack: error.stack,
+                    timestamp: new Date().toISOString(),
+                    isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
+                    userAgent: navigator.userAgent
+                }, null, 2)
+            );
             throw error;
         }
     }
@@ -705,6 +765,84 @@ ${this.medicalSummaryElement.value}
         if (this.progressCard) {
             this.progressCard.style.display = 'none';
         }
+    }
+
+    // Add this new method to show detailed errors
+    showDetailedError(title, details) {
+        // Remove any existing error modal
+        const existingModal = document.getElementById('errorModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+
+        // Create modal HTML
+        const modalHTML = `
+            <div class="modal fade" id="errorModal" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header bg-danger text-white">
+                            <h5 class="modal-title">
+                                <i class="bi bi-exclamation-triangle-fill me-2"></i>${title}
+                            </h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="error-details mb-3">
+                                <h6 class="text-danger">Error Details:</h6>
+                                <pre class="error-log">${details}</pre>
+                            </div>
+                            <div class="device-info mb-3">
+                                <h6>Device Information:</h6>
+                                <ul class="list-unstyled">
+                                    <li><strong>Device:</strong> ${/iPad|iPhone|iPod/.test(navigator.userAgent) ? 'iOS Device' : 'Other Device'}</li>
+                                    <li><strong>Browser:</strong> ${navigator.userAgent}</li>
+                                </ul>
+                            </div>
+                            <div class="troubleshooting-tips">
+                                <h6>Troubleshooting Tips:</h6>
+                                <ul>
+                                    <li>Ensure microphone permissions are granted</li>
+                                    <li>Try refreshing the page</li>
+                                    <li>Check your internet connection</li>
+                                    <li>Try using a different browser</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            <button type="button" class="btn btn-primary" onclick="location.reload()">
+                                <i class="bi bi-arrow-clockwise me-2"></i>Refresh Page
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Add modal to document
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+        // Add styles for error log
+        const style = document.createElement('style');
+        style.textContent = `
+            .error-log {
+                background: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                padding: 10px;
+                font-size: 12px;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+                color: #dc3545;
+                max-height: 150px;
+                overflow-y: auto;
+            }
+        `;
+        document.head.appendChild(style);
+
+        // Show the modal
+        const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
+        errorModal.show();
     }
 }
 

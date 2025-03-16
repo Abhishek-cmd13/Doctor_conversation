@@ -304,4 +304,44 @@ input[type="tel"]:focus {
 
 #progressStatus {
     font-weight: 500;
+}
+
+/* Error Modal Styles */
+.modal-header.bg-danger {
+    background-color: #dc3545 !important;
+}
+
+.error-log {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 10px;
+    font-size: 12px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    color: #dc3545;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.device-info, .troubleshooting-tips {
+    font-size: 14px;
+}
+
+.device-info ul, .troubleshooting-tips ul {
+    margin-bottom: 0;
+}
+
+.modal-body h6 {
+    color: #495057;
+    margin-bottom: 10px;
+}
+
+.modal-body ul li {
+    margin-bottom: 5px;
+}
+
+.btn-close-white {
+    filter: brightness(0) invert(1);
 } 
