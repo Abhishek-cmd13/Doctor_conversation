@@ -325,76 +325,32 @@ class AudioTranscriptionApp {
 
     async processWithGemini(transcript) {
         try {
-            const prompt = `As a medical documentation assistant, analyze this clinical conversation transcript and extract detailed medical information. This is being used in a healthcare setting, so pay special attention to medical terminology, lab values, and clinical findings.
+            const prompt = `Extract ONLY the essential medical information from this conversation. Ignore greetings, casual talk, and any non-medical discussion.
 
-Please analyze and structure the following information with high attention to medical accuracy:
+Transcript: "${transcript}"
 
-1. Patient Information:
-   - Full name (if mentioned)
-   - Age and gender (if mentioned)
-   - Any demographic details provided
-
-2. Chief Complaints and Symptoms:
-   - Primary complaints
-   - Associated symptoms
-   - Onset, duration, and severity
-   - Aggravating/alleviating factors
-   - Pattern and progression of symptoms
-
-3. Medical History:
-   - Past medical conditions
-   - Surgical history
-   - Family history of diseases
-   - Current medical conditions
-   - Allergies and reactions
-   - Previous hospitalizations
-   - Immunization status
-
-4. Medications:
-   - Current medications with dosages
-   - Recent medication changes
-   - Over-the-counter medications
-   - Supplements and herbal remedies
-   - Medication allergies
-   - Medication compliance
-
-5. Clinical Assessment:
-   - Vital signs if mentioned
-   - Physical examination findings
-   - Lab test results and values
-   - Imaging or diagnostic test results
-   - Differential diagnoses discussed
-   - Treatment plan modifications
-
-Medical Summary:
-Create a comprehensive yet concise summary that includes:
-- Key clinical findings
-- Primary concerns
-- Treatment decisions
-- Follow-up plans
-- Critical medical instructions
-- Any urgent care instructions
-- Referrals or specialist consultations
-
-Transcript to analyze: "${transcript}"
-
-Return the response in this exact JSON format:
+Return a JSON with these fields:
 {
-    "patientName": "Full name or 'Not provided'",
-    "symptoms": "Detailed list of symptoms with characteristics",
-    "medicalHistory": "Comprehensive medical history including conditions, surgeries, and family history",
-    "medications": "Complete medication list with dosages and recent changes",
-    "medicalSummary": "Detailed clinical summary with key findings and plan"
+    "patientName": "only the patient's name, nothing else. If not clear, write 'Not mentioned'",
+    
+    "symptoms": "• list only physical/mental symptoms mentioned\\n• no casual conversation\\n• exactly as described by patient",
+    
+    "medicalHistory": "• only past medical conditions\\n• only surgeries\\n• only previous health issues\\n• no general conversation",
+    
+    "medications": "• only medicine names and dosages\\n• only current or prescribed medications\\n• no discussions about medications",
+    
+    "medicalSummary": "2-3 bullet points maximum:\\n• main health issue\\n• key findings\\n• decided action/treatment"
 }
 
-Important notes:
-1. Maintain medical terminology where used
-2. Include numerical values for lab results exactly as stated
-3. Preserve dosage information precisely
-4. Note any critical or abnormal findings
-5. Highlight any urgent follow-up requirements
-6. If information is not mentioned, state 'Not discussed in conversation'
-7. Flag any concerning symptoms or values that require immediate attention`;
+STRICT RULES:
+1. ONLY include medical information
+2. Ignore all casual conversation
+3. If information isn't clearly stated about a field, write "Not mentioned"
+4. For medical summary, maximum 3 bullet points
+5. Use patient's exact words for symptoms
+6. No interpretation or additional medical terms
+7. No small talk or conversation details
+8. Keep everything brief and focused`;
 
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.geminiApiKey}`, {
                 method: 'POST',
@@ -408,9 +364,9 @@ Important notes:
                         }]
                     }],
                     generationConfig: {
-                        temperature: 0.3, // Lower temperature for more precise, clinical responses
-                        topP: 0.8,
-                        topK: 40
+                        temperature: 0.1,
+                        topP: 0.3, // More focused responses
+                        topK: 10   // Very limited word choice
                     }
                 })
             });
@@ -422,18 +378,18 @@ Important notes:
             const data = await response.json();
             let resultText = data.candidates[0].content.parts[0].text;
             
-            // Clean up the response text to ensure it's valid JSON
+            // Clean up the response text
             resultText = resultText.replace(/```json\s*/, '').replace(/```\s*$/, '').trim();
             
             try {
                 const result = JSON.parse(resultText);
                 
-                // Update the UI with the structured data
+                // Format and update UI
                 this.patientNameElement.value = result.patientName || 'Not mentioned';
-                this.symptomsElement.value = this.formatMedicalText(result.symptoms);
-                this.medicalHistoryElement.value = this.formatMedicalText(result.medicalHistory);
-                this.medicationsElement.value = this.formatMedicalText(result.medications);
-                this.medicalSummaryElement.value = this.formatMedicalText(result.medicalSummary);
+                this.symptomsElement.value = this.formatBulletPoints(result.symptoms);
+                this.medicalHistoryElement.value = this.formatBulletPoints(result.medicalHistory);
+                this.medicationsElement.value = this.formatBulletPoints(result.medications);
+                this.medicalSummaryElement.value = this.formatBulletPoints(result.medicalSummary);
                 
                 // Set timestamp
                 const now = new Date();
@@ -447,17 +403,35 @@ Important notes:
         }
     }
 
-    // Helper method to format medical text with proper line breaks and bullet points
-    formatMedicalText(text) {
-        if (!text) return 'Not mentioned';
+    // Updated helper method to ensure cleaner bullet points
+    formatBulletPoints(text) {
+        if (!text || text === 'Not mentioned') return 'Not mentioned';
         
-        // Convert dash lists to bullet points
-        text = text.replace(/^- /gm, '• ');
+        // Clean up the text first
+        let cleanText = text
+            .replace(/[•-]\s*Not mentioned/gi, 'Not mentioned')
+            .replace(/^Not mentioned$/gi, 'Not mentioned');
         
-        // Ensure proper spacing between sections
-        text = text.replace(/\n{3,}/g, '\n\n');
+        if (cleanText === 'Not mentioned') return cleanText;
         
-        return text;
+        // Split by newlines or commas and clean up
+        const points = cleanText
+            .split(/[\n,]/)
+            .map(line => line.trim())
+            .filter(line => {
+                // Remove empty lines and standalone bullet points
+                return line.length > 0 && 
+                       line !== '•' && 
+                       !line.match(/^[•-]\s*$/);
+            })
+            .map(line => {
+                // Clean up and standardize bullet points
+                line = line.replace(/^[•-]\s*/, '').trim();
+                return line.length > 0 ? `• ${line}` : null;
+            })
+            .filter(line => line !== null);
+        
+        return points.length > 0 ? points.join('\n') : 'Not mentioned';
     }
 
     updateUIForRecording(isRecording) {
