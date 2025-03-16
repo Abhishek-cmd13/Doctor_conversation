@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical Scribing Assistant</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="#">Medical Scribing Assistant</a>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Recording Controls</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-grid gap-2">
+                            <button id="recordButton" class="btn btn-primary btn-lg">
+                                <i class="bi bi-mic-fill"></i> Start Recording
+                            </button>
+                            <button id="stopButton" class="btn btn-danger btn-lg" disabled>
+                                <i class="bi bi-stop-fill"></i> Stop Recording
+                            </button>
+                        </div>
+                        <div id="recordingStatus" class="mt-3 text-center" style="display: none;">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Recording in progress...</span>
+                            </div>
+                            <p class="mt-2">Recording in progress...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">Transcript</h5>
+                        <button class="btn btn-sm btn-outline-primary" onclick="copyTranscript()">
+                            <i class="bi bi-clipboard"></i> Copy
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <textarea id="transcript" class="form-control" rows="6" readonly></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Structured Medical Information</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="patientName" class="form-label">Patient Name <i class="bi bi-pencil text-primary"></i></label>
+                            <input type="text" id="patientName" class="form-control">
+                        </div>
+                        <div class="mb-3">
+                            <label for="symptoms" class="form-label">Symptoms <i class="bi bi-pencil text-primary"></i></label>
+                            <textarea id="symptoms" class="form-control" rows="3"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label for="medicalHistory" class="form-label">Medical History <i class="bi bi-pencil text-primary"></i></label>
+                            <textarea id="medicalHistory" class="form-control" rows="3"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label for="medications" class="form-label">Medications <i class="bi bi-pencil text-primary"></i></label>
+                            <textarea id="medications" class="form-control" rows="3"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label for="medicalSummary" class="form-label">Medical Summary <i class="bi bi-pencil text-primary"></i></label>
+                            <textarea id="medicalSummary" class="form-control" rows="3"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label for="timestamp" class="form-label">Timestamp</label>
+                            <input type="text" id="timestamp" class="form-control" readonly>
+                        </div>
+                        <div class="d-grid">
+                            <button id="submitButton" class="btn btn-success btn-lg">
+                                <i class="bi bi-check-circle"></i> Submit to Airtable
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="errorMessage" class="alert alert-danger position-fixed bottom-0 end-0 m-3" style="display: none;"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Polyfill for global object needed by Deepgram SDK
+        window.global = window;
+    </script>
+    <script src="https://unpkg.com/@deepgram/sdk@2.4.0/dist/browser/index.min.js"></script>
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+    <script>
+        function copyTranscript() {
+            const transcript = document.getElementById('transcript');
+            transcript.select();
+            document.execCommand('copy');
+            
+            // Show copy success message
+            const button = event.currentTarget;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-check"></i> Copied!';
+            setTimeout(() => {
+                button.innerHTML = originalText;
+            }, 2000);
+        }
+    </script>
+</body>
+</html> 
