@@ -92,7 +92,17 @@ class AudioTranscriptionApp {
     }
 
     attachEventListeners() {
-        this.recordButton.addEventListener('click', () => this.startRecording());
+        this.recordButton.addEventListener('click', async () => {
+            const permissionState = await this.checkMicrophonePermissions();
+            if (permissionState === 'denied') {
+                this.showDetailedError(
+                    'Permission Required',
+                    'Microphone access is blocked. Please update your browser settings to allow microphone access.'
+                );
+                return;
+            }
+            this.startRecording();
+        });
         this.stopButton.addEventListener('click', () => this.stopRecording());
         this.submitButton.addEventListener('click', () => this.submitToAirtable());
         
@@ -115,27 +125,52 @@ class AudioTranscriptionApp {
 
     async startRecording() {
         try {
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-            
+            // First check if permissions are already granted
+            const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
+            console.log('Microphone permission status:', permissionStatus.state);
+
+            if (permissionStatus.state === 'denied') {
+                this.showDetailedError(
+                    'Microphone Access Denied',
+                    `Please allow microphone access to use this feature:\n\n` +
+                    `1. Click the camera/microphone icon in your browser's address bar\n` +
+                    `2. Select "Allow" for microphone access\n` +
+                    `3. Refresh the page and try again\n\n` +
+                    `Browser settings guide:\n` +
+                    `• Chrome: Settings > Privacy and security > Site settings > Microphone\n` +
+                    `• Safari: Settings > Websites > Microphone\n` +
+                    `• iOS: Settings > Safari > Microphone`
+                );
+                return;
+            }
+
             this.stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
                     channelCount: 1,
-                    sampleRate: isIOS ? 44100 : 16000,
+                    sampleRate: /iPad|iPhone|iPod/.test(navigator.userAgent) ? 44100 : 16000,
                     sampleSize: 16,
                     echoCancellation: true,
                     noiseSuppression: true
                 } 
+            }).catch(error => {
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    throw new Error('Microphone permission was denied. Please allow microphone access and try again.');
+                } else if (error.name === 'NotFoundError') {
+                    throw new Error('No microphone found. Please ensure your microphone is properly connected.');
+                } else {
+                    throw error;
+                }
             });
 
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
             let mimeType = isIOS ? 'audio/mp4' : 'audio/webm;codecs=opus';
             
-            // Check if the mime type is supported
             if (!MediaRecorder.isTypeSupported(mimeType)) {
                 const fallbackTypes = [
                     'audio/webm',
                     'audio/mp4',
                     'audio/ogg;codecs=opus',
-                    ''  // Empty string lets browser choose format
+                    ''
                 ];
 
                 for (const type of fallbackTypes) {
@@ -168,14 +203,29 @@ class AudioTranscriptionApp {
                 await this.transcribeAudio(audioBlob);
             };
 
-            this.mediaRecorder.start(1000); // Record in 1-second chunks
+            this.mediaRecorder.start(1000);
             this.isRecording = true;
             this.updateUIForRecording(true);
             
             console.log('Recording started with mime type:', this.mediaRecorder.mimeType);
         } catch (error) {
             console.error('Recording Error:', error);
-            this.showError(`Recording failed: ${error.message}`);
+            
+            // Show a user-friendly error message with instructions
+            this.showDetailedError(
+                'Microphone Access Required',
+                `${error.message}\n\n` +
+                `To fix this:\n` +
+                `1. Look for the microphone icon in your browser's address bar\n` +
+                `2. Click it and select "Allow"\n` +
+                `3. Refresh the page\n\n` +
+                `If you don't see the icon:\n` +
+                `• Open your browser settings\n` +
+                `• Search for "microphone" or "permissions"\n` +
+                `• Make sure this website is allowed to use the microphone\n\n` +
+                `Technical details:\n` +
+                `Browser: ${navigator.userAgent}`
+            );
         }
     }
 
@@ -215,79 +265,32 @@ class AudioTranscriptionApp {
 
     async transcribeWithDeepgram(audioBlob, language) {
         try {
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-            console.log('Device type:', isIOS ? 'iOS' : 'Other device');
-            console.log('Original audio blob:', audioBlob);
-            console.log('Original mime type:', audioBlob.type);
-
-            let finalBlob = audioBlob;
-
-            // For non-iOS devices, ensure we're using WebM
-            if (!isIOS && !audioBlob.type.includes('webm')) {
-                finalBlob = new Blob([audioBlob], { type: 'audio/webm;codecs=opus' });
-            }
-
             // Create FormData and append the audio blob
             const formData = new FormData();
-            formData.append('audio', finalBlob);
+            formData.append('audio', audioBlob);
 
-            // Configure parameters based on device type
-            const params = new URLSearchParams({
-                model: 'nova-2',
-                language: language,
-                punctuate: true,
-                channels: 1,
-                tier: 'enhanced', // Add enhanced tier for better accuracy
-                profanity_filter: false,
-                numerals: true,
-                smart_format: true
-            });
-
-            // Add encoding parameter only if needed
-            if (isIOS) {
-                params.append('encoding', 'linear16');
-                params.append('sample_rate', '44100');
-            }
-
-            console.log('Request parameters:', Object.fromEntries(params));
-            console.log('Final blob type:', finalBlob.type);
-
-            const response = await fetch(`https://api.deepgram.com/v1/listen?${params.toString()}`, {
+            // Prepare the request with Nova-2 model
+            const response = await fetch(`https://api.deepgram.com/v1/listen?model=nova-2&language=${language}`, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Token ${config.deepgramApiKey}`,
-                    'Content-Type': finalBlob.type
+                    'Authorization': `Token ${config.deepgramApiKey}`
                 },
                 body: formData
             });
 
             if (!response.ok) {
                 const errorData = await response.json();
-                console.error('Deepgram error response:', errorData);
-                throw new Error(`Deepgram error: ${response.status} - ${JSON.stringify(errorData)}`);
+                throw new Error(errorData.message || 'Deepgram transcription failed');
             }
 
             const data = await response.json();
-            console.log('Deepgram response:', data);
-
-            if (!data.results || !data.results.channels || !data.results.channels[0].alternatives) {
-                throw new Error('Invalid response format from Deepgram');
-            }
-
             const transcript = data.results.channels[0].alternatives[0].transcript;
             this.transcriptElement.value = transcript;
             
             // Process with Gemini after successful transcription
             await this.processWithGemini(transcript);
         } catch (error) {
-            console.error('Detailed Deepgram Error:', error);
-            this.showDetailedError(
-                'Transcription Error',
-                `Error Details:\n${error.message}\n\nDevice Info:\n` +
-                `- Browser: ${navigator.userAgent}\n` +
-                `- Audio Type: ${audioBlob.type}\n` +
-                `- Audio Size: ${audioBlob.size} bytes`
-            );
+            console.error('Deepgram API Error:', error);
             throw error;
         }
     }
@@ -435,76 +438,27 @@ class AudioTranscriptionApp {
     async processWithGemini(transcript) {
         try {
             this.updateProgress(75, 'Processing', 'Analyzing with AI...');
-            const prompt = `As a medical documentation assistant, analyze this clinical conversation transcript and extract detailed medical information. This is being used in a healthcare setting, so pay special attention to medical terminology, lab values, and clinical findings.
-
-Please analyze and structure the following information with high attention to medical accuracy:
-
-1. Patient Information:
-   - Full name (if mentioned)
-   - Age and gender (if mentioned)
-   - Any demographic details provided
-
-2. Chief Complaints and Symptoms:
-   - Primary complaints
-   - Associated symptoms
-   - Onset, duration, and severity
-   - Aggravating/alleviating factors
-   - Pattern and progression of symptoms
-
-3. Medical History:
-   - Past medical conditions
-   - Surgical history
-   - Family history of diseases
-   - Current medical conditions
-   - Allergies and reactions
-   - Previous hospitalizations
-   - Immunization status
-
-4. Medications:
-   - Current medications with dosages
-   - Recent medication changes
-   - Over-the-counter medications
-   - Supplements and herbal remedies
-   - Medication allergies
-   - Medication compliance
-
-5. Clinical Assessment:
-   - Vital signs if mentioned
-   - Physical examination findings
-   - Lab test results and values
-   - Imaging or diagnostic test results
-   - Differential diagnoses discussed
-   - Treatment plan modifications
-
-Medical Summary:
-Create a comprehensive yet concise summary that includes:
-- Key clinical findings
-- Primary concerns
-- Treatment decisions
-- Follow-up plans
-- Critical medical instructions
-- Any urgent care instructions
-- Referrals or specialist consultations
+            const prompt = `Extract the medical information stated by the patient and provide ALL responses in English, regardless of the input language.
 
 Transcript to analyze: "${transcript}"
 
 Return the response in this exact JSON format:
 {
-    "patientName": "Full name or 'Not provided'",
-    "symptoms": "Detailed list of symptoms with characteristics",
-    "medicalHistory": "Comprehensive medical history including conditions, surgeries, and family history",
-    "medications": "Complete medication list with dosages and recent changes",
-    "medicalSummary": "Detailed clinical summary with key findings and plan"
+    "patientName": "Name in English if mentioned, otherwise 'Not provided'",
+    "symptoms": "Current symptoms in English, exactly as translated from patient's statement",
+    "medicalHistory": "Past medical conditions in English, exactly as translated from patient's statement",
+    "medications": "Current medications in English with dosages as stated",
+    "medicalSummary": "Brief list of main complaints in English"
 }
 
-Important notes:
-1. Maintain medical terminology where used
-2. Include numerical values for lab results exactly as stated
-3. Preserve dosage information precisely
-4. Note any critical or abnormal findings
-5. Highlight any urgent follow-up requirements
-6. If information is not mentioned, state 'Not discussed in conversation'
-7. Flag any concerning symptoms or values that require immediate attention`;
+Important:
+- Translate all information to English
+- Include ONLY what patient explicitly states
+- Keep medical terms in English
+- Do not add interpretations or recommendations
+- Ignore casual conversation
+- Keep responses brief and to the point
+- If something is not mentioned, write "Not mentioned"`;
 
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.geminiApiKey}`, {
                 method: 'POST',
@@ -860,6 +814,17 @@ ${this.medicalSummaryElement.value}
         // Show the modal
         const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
         errorModal.show();
+    }
+
+    // Add a method to check permissions before starting
+    async checkMicrophonePermissions() {
+        try {
+            const result = await navigator.permissions.query({ name: 'microphone' });
+            return result.state;
+        } catch (error) {
+            console.error('Error checking permissions:', error);
+            return 'unknown';
+        }
     }
 }
 
