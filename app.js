@@ -117,32 +117,41 @@ class AudioTranscriptionApp {
         try {
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
             
-            // Configure audio constraints
-            const audioConstraints = {
+            this.stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
                     channelCount: 1,
-                    sampleRate: isIOS ? 44100 : 16000, // iOS typically uses 44.1kHz
+                    sampleRate: isIOS ? 44100 : 16000,
                     sampleSize: 16,
                     echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
+                    noiseSuppression: true
+                } 
+            });
+
+            let mimeType = isIOS ? 'audio/mp4' : 'audio/webm;codecs=opus';
+            
+            // Check if the mime type is supported
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                const fallbackTypes = [
+                    'audio/webm',
+                    'audio/mp4',
+                    'audio/ogg;codecs=opus',
+                    ''  // Empty string lets browser choose format
+                ];
+
+                for (const type of fallbackTypes) {
+                    if (type === '' || MediaRecorder.isTypeSupported(type)) {
+                        mimeType = type;
+                        break;
+                    }
                 }
-            };
-
-            this.stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
-
-            // Use a format that works on iOS
-            const options = {
-                mimeType: isIOS ? 'audio/mp4' : 'audio/webm;codecs=opus',
-                audioBitsPerSecond: 128000
-            };
-
-            try {
-                this.mediaRecorder = new MediaRecorder(this.stream, options);
-            } catch (e) {
-                // Fallback if the preferred format isn't supported
-                this.mediaRecorder = new MediaRecorder(this.stream);
             }
+
+            console.log('Using mime type:', mimeType);
+
+            this.mediaRecorder = new MediaRecorder(this.stream, {
+                mimeType: mimeType || undefined,
+                audioBitsPerSecond: 128000
+            });
 
             this.audioChunks = [];
 
@@ -159,16 +168,14 @@ class AudioTranscriptionApp {
                 await this.transcribeAudio(audioBlob);
             };
 
-            // Set a smaller timeslice for more frequent ondataavailable events
-            this.mediaRecorder.start(1000); // 1 second chunks
+            this.mediaRecorder.start(1000); // Record in 1-second chunks
             this.isRecording = true;
             this.updateUIForRecording(true);
-            this.updateProgress(25, 'Recording', 'Capturing your voice...');
             
+            console.log('Recording started with mime type:', this.mediaRecorder.mimeType);
         } catch (error) {
             console.error('Recording Error:', error);
             this.showError(`Recording failed: ${error.message}`);
-            this.hideProgress();
         }
     }
 
@@ -208,107 +215,78 @@ class AudioTranscriptionApp {
 
     async transcribeWithDeepgram(audioBlob, language) {
         try {
-            // Collect debug information
-            const debugInfo = {
-                blobType: audioBlob.type,
-                blobSize: audioBlob.size,
-                isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
-                language: language,
-                timestamp: new Date().toISOString()
-            };
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+            console.log('Device type:', isIOS ? 'iOS' : 'Other device');
+            console.log('Original audio blob:', audioBlob);
+            console.log('Original mime type:', audioBlob.type);
 
-            console.log('Debug Info:', debugInfo);
-
-            const isIOS = debugInfo.isIOS;
             let finalBlob = audioBlob;
 
-            if (isIOS) {
-                try {
-                    // Convert to WAV format for consistency
-                    const arrayBuffer = await audioBlob.arrayBuffer();
-                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-                    const wavBlob = await this.audioBufferToWav(audioBuffer);
-                    finalBlob = new Blob([wavBlob], { type: 'audio/wav' });
-                    
-                    debugInfo.conversionSuccess = true;
-                    debugInfo.convertedType = finalBlob.type;
-                    debugInfo.convertedSize = finalBlob.size;
-                } catch (conversionError) {
-                    debugInfo.conversionSuccess = false;
-                    debugInfo.conversionError = conversionError.message;
-                    this.showDetailedError(
-                        'Audio Conversion Error',
-                        JSON.stringify(debugInfo, null, 2)
-                    );
-                    finalBlob = audioBlob;
-                }
+            // For non-iOS devices, ensure we're using WebM
+            if (!isIOS && !audioBlob.type.includes('webm')) {
+                finalBlob = new Blob([audioBlob], { type: 'audio/webm;codecs=opus' });
             }
 
+            // Create FormData and append the audio blob
             const formData = new FormData();
             formData.append('audio', finalBlob);
 
+            // Configure parameters based on device type
             const params = new URLSearchParams({
                 model: 'nova-2',
                 language: language,
                 punctuate: true,
-                diarize: false,
                 channels: 1,
-                encoding: isIOS ? 'linear16' : 'opus',
-                sample_rate: isIOS ? 44100 : 16000
+                tier: 'enhanced', // Add enhanced tier for better accuracy
+                profanity_filter: false,
+                numerals: true,
+                smart_format: true
             });
 
-            debugInfo.requestParams = Object.fromEntries(params);
+            // Add encoding parameter only if needed
+            if (isIOS) {
+                params.append('encoding', 'linear16');
+                params.append('sample_rate', '44100');
+            }
+
+            console.log('Request parameters:', Object.fromEntries(params));
+            console.log('Final blob type:', finalBlob.type);
 
             const response = await fetch(`https://api.deepgram.com/v1/listen?${params.toString()}`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Token ${config.deepgramApiKey}`,
-                    'Content-Type': isIOS ? 'audio/wav' : audioBlob.type
+                    'Content-Type': finalBlob.type
                 },
                 body: formData
             });
 
-            debugInfo.responseStatus = response.status;
-            debugInfo.responseStatusText = response.statusText;
-
             if (!response.ok) {
                 const errorData = await response.json();
-                debugInfo.errorResponse = errorData;
-                this.showDetailedError(
-                    'Transcription Failed',
-                    JSON.stringify(debugInfo, null, 2)
-                );
-                throw new Error(errorData.message || `Deepgram error: ${response.status}`);
+                console.error('Deepgram error response:', errorData);
+                throw new Error(`Deepgram error: ${response.status} - ${JSON.stringify(errorData)}`);
             }
 
             const data = await response.json();
-            debugInfo.transcriptionSuccess = true;
+            console.log('Deepgram response:', data);
 
             if (!data.results || !data.results.channels || !data.results.channels[0].alternatives) {
-                debugInfo.invalidResponse = true;
-                this.showDetailedError(
-                    'Invalid Response Format',
-                    JSON.stringify(debugInfo, null, 2)
-                );
                 throw new Error('Invalid response format from Deepgram');
             }
 
             const transcript = data.results.channels[0].alternatives[0].transcript;
             this.transcriptElement.value = transcript;
+            
+            // Process with Gemini after successful transcription
             await this.processWithGemini(transcript);
-
         } catch (error) {
-            console.error('Deepgram API Error:', error);
+            console.error('Detailed Deepgram Error:', error);
             this.showDetailedError(
                 'Transcription Error',
-                JSON.stringify({
-                    error: error.message,
-                    stack: error.stack,
-                    timestamp: new Date().toISOString(),
-                    isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
-                    userAgent: navigator.userAgent
-                }, null, 2)
+                `Error Details:\n${error.message}\n\nDevice Info:\n` +
+                `- Browser: ${navigator.userAgent}\n` +
+                `- Audio Type: ${audioBlob.type}\n` +
+                `- Audio Size: ${audioBlob.size} bytes`
             );
             throw error;
         }
