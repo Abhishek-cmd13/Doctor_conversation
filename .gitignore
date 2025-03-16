@@ -1,12 +1,13 @@
 # Configuration
-config.js
+public/config.js
 
-# IDE
+# IDE/System files
 .vscode/
 .idea/
-*.swp
-*.swo
 .DS_Store
+
+# Vercel
+.vercel
 
 # Dependencies
 node_modules/
