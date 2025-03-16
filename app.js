@@ -83,6 +83,12 @@ class AudioTranscriptionApp {
                 this.clearSavedPhoneNumber();
             });
         }
+
+        this.progressCard = document.getElementById(config.progressCardId);
+        this.progressBar = document.getElementById(config.progressBarId);
+        this.progressStatus = document.getElementById(config.progressStatusId);
+        this.progressPercentage = document.getElementById(config.progressPercentageId);
+        this.progressStage = document.getElementById(config.progressStageId);
     }
 
     attachEventListeners() {
@@ -119,10 +125,40 @@ class AudioTranscriptionApp {
                 } 
             });
 
-            // Use default WebM format for recording
+            // Check if running on iOS
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+            
+            // Use different mime types based on browser support
+            let mimeType = 'audio/webm;codecs=opus';
+            if (isIOS) {
+                mimeType = 'audio/mp4';
+            }
+
+            // Check if the mime type is supported
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                // Fallback options in order of preference
+                const options = [
+                    'audio/webm',
+                    'audio/mp4',
+                    'audio/ogg;codecs=opus',
+                    'audio/wav',
+                    ''  // Empty string lets browser choose format
+                ];
+
+                for (const option of options) {
+                    if (option === '' || MediaRecorder.isTypeSupported(option)) {
+                        mimeType = option;
+                        break;
+                    }
+                }
+            }
+
+            // Create MediaRecorder with supported type
             this.mediaRecorder = new MediaRecorder(this.stream, {
-                mimeType: 'audio/webm;codecs=opus'
+                mimeType: mimeType || undefined
             });
+
+            console.log('Using mime type:', this.mediaRecorder.mimeType);
 
             this.audioChunks = [];
 
@@ -134,19 +170,21 @@ class AudioTranscriptionApp {
 
             this.mediaRecorder.onstop = async () => {
                 const audioBlob = new Blob(this.audioChunks, { 
-                    type: 'audio/webm;codecs=opus' 
+                    type: this.mediaRecorder.mimeType 
                 });
                 await this.transcribeAudio(audioBlob);
             };
 
-            this.mediaRecorder.start();
+            // Set a smaller timeslice for more frequent ondataavailable events
+            this.mediaRecorder.start(1000); // 1 second chunks
             this.isRecording = true;
             this.updateUIForRecording(true);
+            this.updateProgress(25, 'Recording', 'Capturing your voice...');
             
-            console.log('Recording started with mime type:', this.mediaRecorder.mimeType);
         } catch (error) {
             console.error('Recording Error:', error);
             this.showError(`Recording failed: ${error.message}`);
+            this.hideProgress();
         }
     }
 
@@ -161,20 +199,24 @@ class AudioTranscriptionApp {
 
     async transcribeAudio(audioBlob) {
         try {
+            this.updateProgress(50, 'Transcribing', 'Converting speech to text...');
             console.log('Audio blob type:', audioBlob.type); // Debug log
             console.log('Audio blob size:', audioBlob.size); // Debug log
 
-            if (this.selectedLanguage === 'kn') {
-                // Check if we need to convert the audio format
-                if (audioBlob.type !== 'audio/wav') {
-                    console.log('Audio needs conversion to WAV format'); // Debug log
-                    // Here you might need to add audio format conversion
-                }
-                await this.transcribeWithSarvam(audioBlob, this.selectedLanguage);
-            } else {
-                await this.transcribeWithDeepgram(audioBlob, this.selectedLanguage);
+            // Create a copy of the blob with a supported mime type if needed
+            let processedBlob = audioBlob;
+            if (!audioBlob.type.includes('audio/')) {
+                processedBlob = new Blob([audioBlob], { type: 'audio/mp4' });
             }
+
+            if (this.selectedLanguage === 'kn') {
+                await this.transcribeWithSarvam(processedBlob, this.selectedLanguage);
+            } else {
+                await this.transcribeWithDeepgram(processedBlob, this.selectedLanguage);
+            }
+            this.updateProgress(75, 'Processing', 'Analyzing with AI...');
         } catch (error) {
+            this.hideProgress();
             console.error('Transcription Error:', error);
             this.showError(`Transcription failed: ${error.message}`);
         }
@@ -354,6 +396,7 @@ class AudioTranscriptionApp {
 
     async processWithGemini(transcript) {
         try {
+            this.updateProgress(75, 'Processing', 'Analyzing with AI...');
             const prompt = `As a medical documentation assistant, analyze this clinical conversation transcript and extract detailed medical information. This is being used in a healthcare setting, so pay special attention to medical terminology, lab values, and clinical findings.
 
 Please analyze and structure the following information with high attention to medical accuracy:
@@ -471,7 +514,14 @@ Important notes:
                 console.error('Raw response:', resultText);
                 throw new Error('Failed to parse Gemini AI response as JSON');
             }
+            
+            // After successful processing and form filling
+            this.updateProgress(100, 'Complete', 'Form filled successfully!');
+            setTimeout(() => {
+                this.hideProgress();
+            }, 1000);
         } catch (error) {
+            this.hideProgress();
             this.showError('Error processing with Gemini AI: ' + error.message);
         }
     }
@@ -497,6 +547,7 @@ Important notes:
 
     async submitToAirtable() {
         try {
+            this.updateProgress(90, 'Saving', 'Submitting to database...');
             this.submitButton.disabled = true;
             this.submitButton.innerHTML = '<i class="bi bi-hourglass-split"></i> Submitting...';
 
@@ -534,7 +585,12 @@ Important notes:
             
             // Reset the form
             this.resetForm();
+            this.updateProgress(100, 'Complete', 'Opening WhatsApp...');
+            setTimeout(() => {
+                this.hideProgress();
+            }, 1000);
         } catch (error) {
+            this.hideProgress();
             console.error('Submission Error:', error);
             this.showError('Error during submission: ' + error.message);
         } finally {
@@ -590,6 +646,7 @@ ${this.medicalSummaryElement.value}
         this.medicalSummaryElement.value = '';
         this.timestampElement.value = '';
         // Don't reset the phone number since we want to keep it
+        this.hideProgress();
     }
 
     showSuccess(message, duration = 5000) {
@@ -634,6 +691,20 @@ ${this.medicalSummaryElement.value}
             this.doctorPhoneElement.value = '';
         }
         this.showSuccess('Saved phone number cleared', 1000);
+    }
+
+    updateProgress(percentage, status, stage) {
+        if (this.progressCard) this.progressCard.style.display = 'block';
+        if (this.progressBar) this.progressBar.style.width = `${percentage}%`;
+        if (this.progressStatus) this.progressStatus.textContent = status;
+        if (this.progressPercentage) this.progressPercentage.textContent = `${percentage}%`;
+        if (this.progressStage) this.progressStage.textContent = stage;
+    }
+
+    hideProgress() {
+        if (this.progressCard) {
+            this.progressCard.style.display = 'none';
+        }
     }
 }
 
