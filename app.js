@@ -19,6 +19,9 @@ class AudioTranscriptionApp {
         this.selectedLanguage = 'en'; // Default language
         this.initializeElements();
         this.attachEventListeners();
+        
+        // Load cached phone number on startup
+        this.loadCachedPhoneNumber();
     }
 
     initializeElements() {
@@ -36,6 +39,8 @@ class AudioTranscriptionApp {
         this.medicalSummaryElement = document.getElementById(config.medicalSummaryId);
         this.timestampElement = document.getElementById(config.timestampId);
         this.languageButtons = document.querySelectorAll('.language-btn');
+        this.doctorPhoneElement = document.getElementById(config.doctorPhoneId);
+        this.clearPhoneBtn = document.getElementById('clearPhoneBtn');
         
         // Set default active button
         this.languageButtons.forEach(button => {
@@ -53,6 +58,30 @@ class AudioTranscriptionApp {
             this.errorMessage.className = 'alert alert-danger position-fixed bottom-0 end-0 m-3';
             this.errorMessage.style.display = 'none';
             document.body.appendChild(this.errorMessage);
+        }
+
+        // Add phone number validation and auto-save
+        if (this.doctorPhoneElement) {
+            this.doctorPhoneElement.addEventListener('input', (e) => {
+                // Remove any non-numeric characters
+                e.target.value = e.target.value.replace(/\D/g, '');
+                
+                // Limit to 10 digits
+                if (e.target.value.length > 10) {
+                    e.target.value = e.target.value.slice(0, 10);
+                }
+
+                // Save to localStorage when a valid number is entered
+                if (e.target.value.length === 10) {
+                    this.savePhoneNumber(e.target.value);
+                }
+            });
+        }
+
+        if (this.clearPhoneBtn) {
+            this.clearPhoneBtn.addEventListener('click', () => {
+                this.clearSavedPhoneNumber();
+            });
         }
     }
 
@@ -471,7 +500,8 @@ Important notes:
             this.submitButton.disabled = true;
             this.submitButton.innerHTML = '<i class="bi bi-hourglass-split"></i> Submitting...';
 
-            const data = {
+            // First submit to Airtable
+            const airtableData = {
                 records: [{
                     fields: {
                         'Doctor Name': 'Saurabh',
@@ -490,42 +520,86 @@ Important notes:
                     'Authorization': `Bearer ${config.airtableApiKey}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(data)
+                body: JSON.stringify(airtableData)
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error?.message || 'Failed to submit to Airtable');
+                throw new Error('Failed to submit to Airtable');
             }
 
-            const result = await response.json();
-            this.showSuccess('Successfully submitted to Airtable!');
+            // After successful Airtable submission, open WhatsApp
+            this.sendWhatsApp();
+            
+            this.showSuccess('Successfully submitted to Airtable and opening WhatsApp!');
             
             // Reset the form
-            this.transcriptElement.value = '';
-            this.patientNameElement.value = '';
-            this.symptomsElement.value = '';
-            this.medicalHistoryElement.value = '';
-            this.medicationsElement.value = '';
-            this.medicalSummaryElement.value = '';
-            this.timestampElement.value = '';
+            this.resetForm();
         } catch (error) {
-            console.error('Airtable Error:', error);
-            this.showError('Error submitting to Airtable: ' + error.message);
+            console.error('Submission Error:', error);
+            this.showError('Error during submission: ' + error.message);
         } finally {
             this.submitButton.disabled = false;
             this.submitButton.innerHTML = '<i class="bi bi-check-circle"></i> Submit to Airtable';
         }
     }
 
-    showSuccess(message) {
+    sendWhatsApp() {
+        const phoneNumber = document.getElementById(config.doctorPhoneId).value;
+        if (!phoneNumber || phoneNumber.length !== 10) {
+            this.showError('Please enter a valid 10-digit phone number');
+            return;
+        }
+
+        // Save the phone number when sending
+        this.savePhoneNumber(phoneNumber);
+
+        const message = `
+*Medical Report for ${this.patientNameElement.value}*
+
+*Symptoms:*
+${this.symptomsElement.value}
+
+*Medical History:*
+${this.medicalHistoryElement.value}
+
+*Medications:*
+${this.medicationsElement.value}
+
+*Medical Summary:*
+${this.medicalSummaryElement.value}
+
+*Timestamp:* ${this.timestampElement.value}
+        `;
+
+        // Format phone number for WhatsApp (add country code and remove spaces/special chars)
+        const formattedPhone = `91${phoneNumber.replace(/\D/g, '')}`;
+        
+        // Create WhatsApp URL with encoded message
+        const whatsappUrl = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
+        
+        // Open WhatsApp in a new tab
+        window.open(whatsappUrl, '_blank');
+    }
+
+    resetForm() {
+        this.transcriptElement.value = '';
+        this.patientNameElement.value = '';
+        this.symptomsElement.value = '';
+        this.medicalHistoryElement.value = '';
+        this.medicationsElement.value = '';
+        this.medicalSummaryElement.value = '';
+        this.timestampElement.value = '';
+        // Don't reset the phone number since we want to keep it
+    }
+
+    showSuccess(message, duration = 5000) {
         const successMessage = document.createElement('div');
         successMessage.className = 'alert alert-success position-fixed bottom-0 end-0 m-3';
         successMessage.textContent = message;
         document.body.appendChild(successMessage);
         setTimeout(() => {
             successMessage.remove();
-        }, 5000);
+        }, duration);
     }
 
     showError(message) {
@@ -538,6 +612,28 @@ Important notes:
         } else {
             console.error('Error:', message);
         }
+    }
+
+    loadCachedPhoneNumber() {
+        const cachedPhone = localStorage.getItem('doctorPhoneNumber');
+        if (cachedPhone && this.doctorPhoneElement) {
+            this.doctorPhoneElement.value = cachedPhone;
+        }
+    }
+
+    savePhoneNumber(phoneNumber) {
+        if (phoneNumber && phoneNumber.length === 10) {
+            localStorage.setItem('doctorPhoneNumber', phoneNumber);
+            this.showSuccess('Phone number saved!', 1000); // Show for 1 second
+        }
+    }
+
+    clearSavedPhoneNumber() {
+        localStorage.removeItem('doctorPhoneNumber');
+        if (this.doctorPhoneElement) {
+            this.doctorPhoneElement.value = '';
+        }
+        this.showSuccess('Saved phone number cleared', 1000);
     }
 }
 

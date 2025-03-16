@@ -244,4 +244,39 @@ textarea {
     .form-label {
         color: #e2e8f0;
     }
+}
+
+/* Add to your existing styles */
+.input-group-text {
+    background-color: #f8fafc;
+    border-right: none;
+}
+
+input[type="tel"] {
+    border-left: none;
+}
+
+input[type="tel"]:focus {
+    border-left: none;
+    box-shadow: none;
+}
+
+/* Add to your existing styles */
+#clearPhoneBtn {
+    border-left: none;
+    padding: 0.375rem 0.75rem;
+}
+
+#clearPhoneBtn:hover {
+    background-color: #dc3545;
+    color: white;
+    border-color: #dc3545;
+}
+
+.input-group:has(input:not(:placeholder-shown)) #clearPhoneBtn {
+    display: inline-flex;
+}
+
+.input-group #clearPhoneBtn {
+    display: none;
 } 

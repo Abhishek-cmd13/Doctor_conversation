@@ -21,6 +21,7 @@ const config = {
     medicationsId: 'medications',
     medicalSummaryId: 'medicalSummary',
     timestampId: 'timestamp',
+    doctorPhoneId: 'doctorPhone',
 
     // Validation method
     isConfigValid() {

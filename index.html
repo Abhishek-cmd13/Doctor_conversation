@@ -97,6 +97,17 @@
                             <label for="timestamp" class="form-label">Timestamp</label>
                             <input type="text" id="timestamp" class="form-control" readonly>
                         </div>
+                        <div class="mb-3">
+                            <label for="doctorPhone" class="form-label">Doctor's Phone Number</label>
+                            <div class="input-group">
+                                <span class="input-group-text">+91</span>
+                                <input type="tel" id="doctorPhone" class="form-control" placeholder="Enter 10-digit number" pattern="[0-9]{10}" required>
+                                <button class="btn btn-outline-secondary" type="button" id="clearPhoneBtn" title="Clear saved number">
+                                    <i class="bi bi-x-lg"></i>
+                                </button>
+                            </div>
+                            <div class="form-text">Number will be saved for future use</div>
+                        </div>
                         <div class="d-grid">
                             <button id="submitButton" class="btn btn-success btn-lg">
                                 <i class="bi bi-check-circle"></i> Submit to Airtable
