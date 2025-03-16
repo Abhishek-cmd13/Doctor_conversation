@@ -265,17 +265,7 @@ class AudioTranscriptionApp {
 
     async transcribeWithDeepgram(audioBlob, language) {
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-        const deviceInfo = {
-            isIOS,
-            userAgent: navigator.userAgent,
-            audioType: audioBlob.type,
-            audioSize: audioBlob.size,
-            language: language,
-            timestamp: new Date().toISOString()
-        };
-
-        console.log('Device Information:', deviceInfo);
-
+        
         try {
             if (isIOS) {
                 // iOS-specific implementation
@@ -290,19 +280,15 @@ class AudioTranscriptionApp {
                     sample_rate: 44100
                 };
 
-                console.log('iOS Request Parameters:', requestParams);
-
+                // iOS-specific request with Token instead of Key
                 const response = await fetch(`https://api.deepgram.com/v1/listen?${new URLSearchParams(requestParams)}`, {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Key ${config.deepgramApiKey}`,
+                        'Authorization': `Token ${config.deepgramApiKey}`,  // Changed back to Token for iOS
                         'Content-Type': 'audio/mp4'
                     },
                     body: formData
                 });
-
-                console.log('iOS Response Status:', response.status);
-                console.log('iOS Response Headers:', Object.fromEntries(response.headers.entries()));
 
                 if (!response.ok) {
                     const errorData = await response.json();
@@ -311,19 +297,12 @@ class AudioTranscriptionApp {
                 }
 
                 const data = await response.json();
-                console.log('iOS Deepgram Success Response:', {
-                    hasResults: !!data.results,
-                    hasTranscript: !!(data.results?.channels?.[0]?.alternatives?.[0]?.transcript),
-                    confidence: data.results?.channels?.[0]?.alternatives?.[0]?.confidence
-                });
-
                 const transcript = data.results.channels[0].alternatives[0].transcript;
                 this.transcriptElement.value = transcript;
                 await this.processWithGemini(transcript);
 
             } else {
-                // Non-iOS implementation with error logging
-                console.log('Using standard configuration');
+                // Original non-iOS implementation remains unchanged
                 const formData = new FormData();
                 formData.append('audio', audioBlob);
 
@@ -335,12 +314,9 @@ class AudioTranscriptionApp {
                     body: formData
                 });
 
-                console.log('Standard Response Status:', response.status);
-
                 if (!response.ok) {
                     const errorData = await response.json();
-                    console.error('Standard Deepgram Error Response:', errorData);
-                    throw new Error(`Standard Deepgram Error: ${response.status} - ${JSON.stringify(errorData)}`);
+                    throw new Error(errorData.message || 'Deepgram transcription failed');
                 }
 
                 const data = await response.json();
@@ -352,26 +328,13 @@ class AudioTranscriptionApp {
         } catch (error) {
             console.error('Detailed Transcription Error:', {
                 error: error.message,
-                stack: error.stack,
-                deviceInfo,
-                timestamp: new Date().toISOString()
+                deviceInfo: {
+                    isIOS,
+                    audioType: audioBlob.type,
+                    audioSize: audioBlob.size,
+                    language
+                }
             });
-
-            // Show a more detailed error message to the user
-            this.showDetailedError(
-                'Transcription Error',
-                `Error Details:\n${error.message}\n\nDevice Info:\n` +
-                `• Device: ${isIOS ? 'iOS Device' : 'Other Device'}\n` +
-                `• Audio Type: ${audioBlob.type}\n` +
-                `• Audio Size: ${audioBlob.size} bytes\n` +
-                `• Language: ${language}\n` +
-                `• Time: ${new Date().toLocaleString()}\n\n` +
-                `If this error persists:\n` +
-                `1. Check your internet connection\n` +
-                `2. Try refreshing the page\n` +
-                `3. Make sure microphone permissions are granted`
-            );
-
             throw error;
         }
     }
