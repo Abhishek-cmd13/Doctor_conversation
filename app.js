@@ -264,33 +264,114 @@ class AudioTranscriptionApp {
     }
 
     async transcribeWithDeepgram(audioBlob, language) {
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        const deviceInfo = {
+            isIOS,
+            userAgent: navigator.userAgent,
+            audioType: audioBlob.type,
+            audioSize: audioBlob.size,
+            language: language,
+            timestamp: new Date().toISOString()
+        };
+
+        console.log('Device Information:', deviceInfo);
+
         try {
-            // Create FormData and append the audio blob
-            const formData = new FormData();
-            formData.append('audio', audioBlob);
+            if (isIOS) {
+                // iOS-specific implementation
+                console.log('Using iOS-specific configuration');
+                const formData = new FormData();
+                formData.append('audio', audioBlob);
 
-            // Prepare the request with Nova-2 model
-            const response = await fetch(`https://api.deepgram.com/v1/listen?model=nova-2&language=${language}`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Token ${config.deepgramApiKey}`
-                },
-                body: formData
-            });
+                const requestParams = {
+                    model: 'nova-2',
+                    language: language,
+                    encoding: 'linear16',
+                    sample_rate: 44100
+                };
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'Deepgram transcription failed');
+                console.log('iOS Request Parameters:', requestParams);
+
+                const response = await fetch(`https://api.deepgram.com/v1/listen?${new URLSearchParams(requestParams)}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Key ${config.deepgramApiKey}`,
+                        'Content-Type': 'audio/mp4'
+                    },
+                    body: formData
+                });
+
+                console.log('iOS Response Status:', response.status);
+                console.log('iOS Response Headers:', Object.fromEntries(response.headers.entries()));
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('iOS Deepgram Error Response:', errorData);
+                    throw new Error(`iOS Deepgram Error: ${response.status} - ${JSON.stringify(errorData)}`);
+                }
+
+                const data = await response.json();
+                console.log('iOS Deepgram Success Response:', {
+                    hasResults: !!data.results,
+                    hasTranscript: !!(data.results?.channels?.[0]?.alternatives?.[0]?.transcript),
+                    confidence: data.results?.channels?.[0]?.alternatives?.[0]?.confidence
+                });
+
+                const transcript = data.results.channels[0].alternatives[0].transcript;
+                this.transcriptElement.value = transcript;
+                await this.processWithGemini(transcript);
+
+            } else {
+                // Non-iOS implementation with error logging
+                console.log('Using standard configuration');
+                const formData = new FormData();
+                formData.append('audio', audioBlob);
+
+                const response = await fetch(`https://api.deepgram.com/v1/listen?model=nova-2&language=${language}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Token ${config.deepgramApiKey}`
+                    },
+                    body: formData
+                });
+
+                console.log('Standard Response Status:', response.status);
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Standard Deepgram Error Response:', errorData);
+                    throw new Error(`Standard Deepgram Error: ${response.status} - ${JSON.stringify(errorData)}`);
+                }
+
+                const data = await response.json();
+                const transcript = data.results.channels[0].alternatives[0].transcript;
+                this.transcriptElement.value = transcript;
+                await this.processWithGemini(transcript);
             }
 
-            const data = await response.json();
-            const transcript = data.results.channels[0].alternatives[0].transcript;
-            this.transcriptElement.value = transcript;
-            
-            // Process with Gemini after successful transcription
-            await this.processWithGemini(transcript);
         } catch (error) {
-            console.error('Deepgram API Error:', error);
+            console.error('Detailed Transcription Error:', {
+                error: error.message,
+                stack: error.stack,
+                deviceInfo,
+                timestamp: new Date().toISOString()
+            });
+
+            // Show a more detailed error message to the user
+            this.showDetailedError(
+                'Transcription Error',
+                `Error Details:\n${error.message}\n\nDevice Info:\n` +
+                `• Device: ${isIOS ? 'iOS Device' : 'Other Device'}\n` +
+                `• Audio Type: ${audioBlob.type}\n` +
+                `• Audio Size: ${audioBlob.size} bytes\n` +
+                `• Language: ${language}\n` +
+                `• Time: ${new Date().toLocaleString()}\n\n` +
+                `If this error persists:\n` +
+                `1. Check your internet connection\n` +
+                `2. Try refreshing the page\n` +
+                `3. Make sure microphone permissions are granted`
+            );
+
             throw error;
         }
     }
@@ -704,13 +785,22 @@ ${this.medicalSummaryElement.value}
 
     // Add this new method to show detailed errors
     showDetailedError(title, details) {
-        // Remove any existing error modal
-        const existingModal = document.getElementById('errorModal');
-        if (existingModal) {
-            existingModal.remove();
-        }
+        const errorInfo = {
+            title,
+            details,
+            timestamp: new Date().toISOString(),
+            deviceInfo: {
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
+                language: navigator.language,
+                onLine: navigator.onLine
+            }
+        };
 
-        // Create modal HTML
+        console.error('Error Information:', errorInfo);
+
+        // Create and show error modal
         const modalHTML = `
             <div class="modal fade" id="errorModal" tabindex="-1">
                 <div class="modal-dialog">
@@ -723,23 +813,14 @@ ${this.medicalSummaryElement.value}
                         </div>
                         <div class="modal-body">
                             <div class="error-details mb-3">
-                                <h6 class="text-danger">Error Details:</h6>
                                 <pre class="error-log">${details}</pre>
                             </div>
                             <div class="device-info mb-3">
-                                <h6>Device Information:</h6>
+                                <h6>Technical Information:</h6>
                                 <ul class="list-unstyled">
-                                    <li><strong>Device:</strong> ${/iPad|iPhone|iPod/.test(navigator.userAgent) ? 'iOS Device' : 'Other Device'}</li>
-                                    <li><strong>Browser:</strong> ${navigator.userAgent}</li>
-                                </ul>
-                            </div>
-                            <div class="troubleshooting-tips">
-                                <h6>Troubleshooting Tips:</h6>
-                                <ul>
-                                    <li>Ensure microphone permissions are granted</li>
-                                    <li>Try refreshing the page</li>
-                                    <li>Check your internet connection</li>
-                                    <li>Try using a different browser</li>
+                                    <li>Browser: ${navigator.userAgent}</li>
+                                    <li>Online Status: ${navigator.onLine ? 'Connected' : 'Offline'}</li>
+                                    <li>Time: ${new Date().toLocaleString()}</li>
                                 </ul>
                             </div>
                         </div>
@@ -754,26 +835,14 @@ ${this.medicalSummaryElement.value}
             </div>
         `;
 
+        // Remove existing modal if present
+        const existingModal = document.getElementById('errorModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+
         // Add modal to document
         document.body.insertAdjacentHTML('beforeend', modalHTML);
-
-        // Add styles for error log
-        const style = document.createElement('style');
-        style.textContent = `
-            .error-log {
-                background: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 4px;
-                padding: 10px;
-                font-size: 12px;
-                white-space: pre-wrap;
-                word-wrap: break-word;
-                color: #dc3545;
-                max-height: 150px;
-                overflow-y: auto;
-            }
-        `;
-        document.head.appendChild(style);
 
         // Show the modal
         const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
