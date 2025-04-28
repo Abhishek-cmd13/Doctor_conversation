@@ -248,7 +248,15 @@ class AudioTranscriptionApp {
         try {
             console.log('Audio blob type:', audioBlob.type);
             console.log('Audio blob size:', audioBlob.size);
-            await this.transcribeWithDeepgram(audioBlob, this.selectedLanguage);
+            
+            // Use Sarvam for Kannada, Tamil, and Telugu, Deepgram for other languages
+            if (this.selectedLanguage === 'kn' || this.selectedLanguage === 'ta' || this.selectedLanguage === 'te') {
+                // Convert language code to Sarvam format (add -IN suffix)
+                const sarvamLanguageCode = `${this.selectedLanguage}-IN`;
+                await this.transcribeWithSarvam(audioBlob, sarvamLanguageCode);
+            } else {
+                await this.transcribeWithDeepgram(audioBlob, this.selectedLanguage);
+            }
         } catch (error) {
             console.error('Transcription Error:', error);
             this.showError(`Transcription failed: ${error.message}`);
@@ -294,6 +302,47 @@ class AudioTranscriptionApp {
             await this.processWithGemini(transcript);
         } catch (error) {
             console.error('Deepgram API Error:', error);
+            throw error;
+        }
+    }
+
+    async transcribeWithSarvam(audioBlob, language) {
+        try {
+            // Convert audio to WAV format for Sarvam API
+            const wavBlob = await this.convertToWav(audioBlob);
+            
+            const form = new FormData();
+            form.append("model", "saarika:v2");
+            form.append("language_code", language);
+            form.append("with_timestamps", "false");
+            form.append("with_diarization", "false");
+            form.append("num_speakers", "2");
+            form.append("file", wavBlob);
+
+            const response = await fetch('https://api.sarvam.ai/speech-to-text', {
+                method: 'POST',
+                headers: {
+                    'api-subscription-key': config.sarvamApiKey,
+                    'Accept': 'application/json'
+                },
+                body: form
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error('Sarvam API Error Response:', errorData);
+                throw new Error(errorData.error?.message || 'Sarvam transcription failed');
+            }
+
+            const data = await response.json();
+            console.log('Sarvam API Response:', data);
+            const transcript = data.transcript;
+            this.transcriptElement.value = transcript;
+            
+            // Process with Gemini after successful transcription
+            await this.processWithGemini(transcript);
+        } catch (error) {
+            console.error('Sarvam API Error:', error);
             throw error;
         }
     }
