@@ -369,16 +369,32 @@ class AudioTranscriptionApp {
                 body: JSON.stringify({
                     contents: [{
                         parts: [{
-                            text: `Extract the following information from this medical conversation. Format the response exactly as shown below, using simple bullet points (-) for lists:
+                            text: `Extract the following information from this medical conversation. Format the response exactly as shown below, using simple bullet points (-) for lists. Make sure to include ALL items mentioned, not just one:
 
 Patient Name: [extract patient's name]
 Symptoms:
-- [list key symptoms]
+- [list ALL current symptoms and complaints mentioned by both patient and doctor]
 Medical History:
-- [list relevant medical history]
+- [list ALL past and current medical conditions, including:
+  * Chronic diseases (like asthma, diabetes, hypertension)
+  * Serious conditions (like cancer, heart disease)
+  * Past surgeries
+  * Family medical history
+  * Any other relevant medical history]
 Medications:
-- [list current medications]
+- [list ALL medications with their complete dosage information, for example:
+  * "Paracetamol 500mg twice daily"
+  * "Amoxicillin 250mg three times a day"
+  * Include frequency (once/twice/thrice daily), duration, and any special instructions]
 Medical Summary: [provide a concise summary]
+Lab Tests:
+- [list ALL recommended lab tests]
+
+Important: 
+- Do not limit yourself to just one item per category. Include EVERYTHING mentioned in the conversation.
+- Make sure to categorize chronic and serious diseases (like asthma, cancer, diabetes) under Medical History, not under Symptoms.
+- Current symptoms and complaints go under Symptoms, while ongoing/chronic conditions go under Medical History.
+- For medications, ALWAYS include the dosage, frequency, and duration if mentioned in the conversation.
 
 Conversation: ${transcript}`
                         }]
@@ -430,17 +446,58 @@ Conversation: ${transcript}`
     updateFormFields(analysis) {
         try {
             // Extract information from the analysis and update form fields
+            // Using [\s\S]*? to match any characters including newlines until the next section
             const patientNameMatch = analysis.match(/Patient Name:?\s*([^\n]+)/i);
-            const symptomsMatch = analysis.match(/Symptoms:?\s*([^\n]+)/i);
-            const medicalHistoryMatch = analysis.match(/Medical History:?\s*([^\n]+)/i);
-            const medicationsMatch = analysis.match(/Medications:?\s*([^\n]+)/i);
-            const medicalSummaryMatch = analysis.match(/Medical Summary:?\s*([^\n]+)/i);
+            const symptomsMatch = analysis.match(/Symptoms:?\s*([\s\S]*?)(?=Medical History:|$)/i);
+            const medicalHistoryMatch = analysis.match(/Medical History:?\s*([\s\S]*?)(?=Medications:|$)/i);
+            const medicationsMatch = analysis.match(/Medications:?\s*([\s\S]*?)(?=Medical Summary:|$)/i);
+            const medicalSummaryMatch = analysis.match(/Medical Summary:?\s*([\s\S]*?)(?=Lab Tests:|$)/i);
+            const labTestsMatch = analysis.match(/Lab Tests:?\s*([\s\S]*?)(?=\n\n|$)/i);
 
             if (patientNameMatch) document.getElementById('patientName').value = patientNameMatch[1].trim();
-            if (symptomsMatch) document.getElementById('symptoms').value = symptomsMatch[1].trim();
-            if (medicalHistoryMatch) document.getElementById('medicalHistory').value = medicalHistoryMatch[1].trim();
-            if (medicationsMatch) document.getElementById('medications').value = medicationsMatch[1].trim();
+            
+            // Clean up bullet points and extra whitespace for multi-line fields
+            if (symptomsMatch) {
+                const symptoms = symptomsMatch[1]
+                    .split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line.startsWith('-'))
+                    .map(line => line.substring(1).trim())
+                    .join('\n');
+                document.getElementById('symptoms').value = symptoms;
+            }
+            
+            if (medicalHistoryMatch) {
+                const history = medicalHistoryMatch[1]
+                    .split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line.startsWith('-'))
+                    .map(line => line.substring(1).trim())
+                    .join('\n');
+                document.getElementById('medicalHistory').value = history;
+            }
+            
+            if (medicationsMatch) {
+                const medications = medicationsMatch[1]
+                    .split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line.startsWith('-'))
+                    .map(line => line.substring(1).trim())
+                    .join('\n');
+                document.getElementById('medications').value = medications;
+            }
+            
             if (medicalSummaryMatch) document.getElementById('medicalSummary').value = medicalSummaryMatch[1].trim();
+            
+            if (labTestsMatch) {
+                const labTests = labTestsMatch[1]
+                    .split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line.startsWith('-'))
+                    .map(line => line.substring(1).trim())
+                    .join('\n');
+                document.getElementById('labTests').value = labTests;
+            }
 
             // Update timestamp
             document.getElementById('timestamp').value = new Date().toLocaleString();
