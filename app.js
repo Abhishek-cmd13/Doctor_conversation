@@ -458,14 +458,23 @@ Conversation: ${transcript}`
 
     async submitToAirtable() {
         try {
-            // Simple object with just the required fields
+            // Get all form values
+            const patientName = document.getElementById('patientName').value;
+            const symptoms = document.getElementById('symptoms').value;
+            const medicalHistory = document.getElementById('medicalHistory').value;
+            const medications = document.getElementById('medications').value;
+            const medicalSummary = document.getElementById('medicalSummary').value;
+            const labTests = document.getElementById('labTests').value;
+
+            // Create fields object with proper Airtable field names
             const fields = {
                 "Doctor Name": "Saurabh",
-                "Patient Name": document.getElementById('patientName').value,
-                "Symptoms": document.getElementById('symptoms').value,
-                "Medical History": document.getElementById('medicalHistory').value,
-                "Medications": document.getElementById('medications').value,
-                "Medical Summary": document.getElementById('medicalSummary').value
+                "Patient Name": patientName || "",
+                "Symptoms": symptoms || "",
+                "Medical History": medicalHistory || "",
+                "Medications": medications || "",
+                "Medical Summary": medicalSummary || "",
+                "Lab Tests": labTests || ""
             };
 
             // Safari-specific fetch options
@@ -490,6 +499,12 @@ Conversation: ${transcript}`
             let response;
             try {
                 response = await fetch(`https://api.airtable.com/v0/${config.airtableBaseId}/Table%201`, fetchOptions);
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Airtable API Error:', errorData);
+                    throw new Error(errorData.error?.message || `Failed to submit to Airtable: ${response.status} ${response.statusText}`);
+                }
             } catch (fetchError) {
                 console.error('Fetch error:', fetchError);
                 // Try alternative fetch for Safari
@@ -501,24 +516,26 @@ Conversation: ${transcript}`
                             'Access-Control-Allow-Origin': '*'
                         }
                     });
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error?.message || `Failed to submit to Airtable: ${response.status} ${response.statusText}`);
+                    }
                 } else {
                     throw fetchError;
                 }
-            }
-
-            if (!response.ok) {
-                throw new Error('Failed to submit to Airtable');
             }
 
             // Send WhatsApp message if phone number exists
             const doctorPhone = document.getElementById('doctorPhone').value;
             if (doctorPhone) {
                 // Create a formatted medical report without asterisks
-                const medicalReport = `Medical Report for ${fields["Patient Name"]}\n\n` +
-                    `Symptoms:\n${fields["Symptoms"]}\n\n` +
-                    `Medical History:\n${fields["Medical History"]}\n\n` +
-                    `Medications:\n${fields["Medications"]}\n\n` +
-                    `Medical Summary:\n${fields["Medical Summary"]}\n\n` +
+                const medicalReport = `Medical Report for ${patientName}\n\n` +
+                    `Symptoms:\n${symptoms}\n\n` +
+                    `Medical History:\n${medicalHistory}\n\n` +
+                    `Medications:\n${medications}\n\n` +
+                    `Medical Summary:\n${medicalSummary}\n\n` +
+                    `Recommended Lab Tests:\n${labTests}\n\n` +
                     `Generated on: ${new Date().toLocaleString()}`;
                 
                 const encodedMessage = encodeURIComponent(medicalReport);
@@ -547,6 +564,7 @@ Conversation: ${transcript}`
             document.getElementById('medicalHistory').value = '';
             document.getElementById('medications').value = '';
             document.getElementById('medicalSummary').value = '';
+            document.getElementById('labTests').value = '';
             this.transcriptElement.value = '';
             
             this.showSuccess('Data submitted successfully and sent to WhatsApp!');
