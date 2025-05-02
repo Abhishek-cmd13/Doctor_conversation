@@ -311,40 +311,99 @@ class AudioTranscriptionApp {
             // Convert audio to WAV format for Sarvam API
             const wavBlob = await this.convertToWav(audioBlob);
             
-            const form = new FormData();
-            form.append("model", "saarika:v2");
-            form.append("language_code", language);
-            form.append("with_timestamps", "false");
-            form.append("with_diarization", "false");
-            form.append("num_speakers", "2");
-            form.append("file", wavBlob);
-
-            const response = await fetch('https://api.sarvam.ai/speech-to-text', {
-                method: 'POST',
-                headers: {
-                    'api-subscription-key': config.sarvamApiKey,
-                    'Accept': 'application/json'
-                },
-                body: form
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                console.error('Sarvam API Error Response:', errorData);
-                throw new Error(errorData.error?.message || 'Sarvam transcription failed');
+            // Split into 20-second chunks for Kannada, Tamil, and Telugu
+            if (language === 'kn-IN' || language === 'ta-IN' || language === 'te-IN') {
+                const chunks = await this.splitAudioIntoChunks(wavBlob, 20);
+                let fullTranscript = '';
+                
+                for (let i = 0; i < chunks.length; i++) {
+                    console.log(`Processing chunk ${i + 1} of ${chunks.length} for ${language}`);
+                    const chunkTranscript = await this.processSarvamChunk(chunks[i], language);
+                    fullTranscript += chunkTranscript + ' ';
+                }
+                
+                this.transcriptElement.value = fullTranscript.trim();
+                // Process with Gemini after successful transcription
+                await this.processWithGemini(fullTranscript.trim());
+            } else {
+                // For other languages, process normally
+                const transcript = await this.processSarvamChunk(wavBlob, language);
+                this.transcriptElement.value = transcript;
+                // Process with Gemini after successful transcription
+                await this.processWithGemini(transcript);
             }
-
-            const data = await response.json();
-            console.log('Sarvam API Response:', data);
-            const transcript = data.transcript;
-            this.transcriptElement.value = transcript;
-            
-            // Process with Gemini after successful transcription
-            await this.processWithGemini(transcript);
         } catch (error) {
             console.error('Sarvam API Error:', error);
             throw error;
         }
+    }
+
+    async splitAudioIntoChunks(audioBlob, chunkDurationSeconds) {
+        try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const arrayBuffer = await audioBlob.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            
+            const sampleRate = audioBuffer.sampleRate;
+            const chunkSize = sampleRate * chunkDurationSeconds;
+            const chunks = [];
+            
+            for (let i = 0; i < audioBuffer.length; i += chunkSize) {
+                const chunkLength = Math.min(chunkSize, audioBuffer.length - i);
+                const chunkBuffer = audioContext.createBuffer(
+                    audioBuffer.numberOfChannels,
+                    chunkLength,
+                    sampleRate
+                );
+                
+                // Copy data for each channel
+                for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+                    const channelData = audioBuffer.getChannelData(channel);
+                    const chunkData = chunkBuffer.getChannelData(channel);
+                    for (let j = 0; j < chunkLength; j++) {
+                        chunkData[j] = channelData[i + j];
+                    }
+                }
+                
+                // Convert chunk to WAV
+                const wavBlob = await this.audioBufferToWav(chunkBuffer);
+                chunks.push(new Blob([wavBlob], { type: 'audio/wav' }));
+            }
+            
+            return chunks;
+        } catch (error) {
+            console.error('Error splitting audio:', error);
+            throw error;
+        }
+    }
+
+    async processSarvamChunk(audioBlob, language) {
+        const form = new FormData();
+        form.append("model", "saarika:v2");
+        form.append("language_code", language);
+        form.append("with_timestamps", "false");
+        form.append("with_diarization", "false");
+        form.append("num_speakers", "2");
+        form.append("file", audioBlob);
+
+        const response = await fetch('https://api.sarvam.ai/speech-to-text', {
+            method: 'POST',
+            headers: {
+                'api-subscription-key': config.sarvamApiKey,
+                'Accept': 'application/json'
+            },
+            body: form
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            console.error('Sarvam API Error Response:', errorData);
+            throw new Error(errorData.error?.message || 'Sarvam transcription failed');
+        }
+
+        const data = await response.json();
+        console.log('Sarvam API Response:', data);
+        return data.transcript;
     }
 
     async processWithGemini(transcript) {
